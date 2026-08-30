@@ -4,19 +4,17 @@ Running state of the project. `plan.md` is the spec (what we intend to build);
 this file is the log (what is actually built, what is next, and what we decided
 along the way that the spec does not say).
 
-**Last updated:** 2026-08-30, end of Phase 4 and 5.
+**Last updated:** 2026-08-30, late. Every phase Claude can build is built.
 
 ---
 
-## Checkpoint — 2026-08-30, session 2
+## Checkpoint — 2026-08-30, end of session 2
 
-Phases 1, 2, 2.5, 3, 6 and 7 done, plus the Lever EU fix. **187 tests pass,
-ruff clean.** 5,149 postings from 22 companies.
+**Every phase that does not need a Category B body is done.** Phases 1, 2, 2.5,
+3, 4, 5, 6, 7, 8, 9, plus the Lever EU fix and a whitespace fix in ingestion.
+244 tests, ruff clean, CI green on GitHub. 5,149 postings from 22 companies.
 
-Discovery verified live through `--from file`: 15 niche robotics names in,
-7 verified out, spread across all three boards (ANYbotics on Lever, Skydio on
-Ashby, Agility on Greenhouse) — the cross-board search is what found them. A
-second run cost **zero** HTTP requests, which is the cache working.
+What is left is the nine reserved functions, which the author writes.
 
 **Still unverified:** `discover --from crawl`. `index.commoncrawl.org` has been
 unreachable across two sessions (connect timeout from any client, not a code
@@ -29,33 +27,44 @@ uv run python -m agent_app.cli discover --from crawl --source ashby --limit 40
 
 ## Resume here
 
-**Arash:** open `backend/src/agent_app/core/chunking.py` and write
-`chunk_posting`. It is the first Category B function and everything downstream
-waits on it. The docstring lists what must hold.
-
-**Claude:** nothing left. Every phase that can be built without a Category B
-body is built. The remaining work is the nine reserved functions.
-
-The moment `chunk_posting` exists, this runs end to end:
+**The author is working through the nine Category B functions.** Start here:
 
 ```
 cd backend
-uv run python -m agent_app.cli embed     # chunks -> vectors.npy
-uv run python -m agent_app.cli status    # confirms the counts line up
+uv run python check.py            # the scoreboard: 0/9 done, 68 tests
+uv run python check.py 3 -v       # one problem, with the failures
+uv run python try_chunking.py     # see chunking output on a real posting
 ```
 
-and once `search` follows, `/letters/:id` and the retrieval trace light up.
+Problem statements are in **`backend/exercises/README.md`** — one per function,
+with the contract, worked examples, the formulas for BM25 and RRF, and what is
+left to the author's judgement.
 
-`python dev.py` then <http://localhost:5173>. Note Vite binds to `localhost`,
-not `127.0.0.1` — checking the wrong one looks like the server is down.
+Suggested order. It is a dependency chain, not a difficulty ramp — `dense_scores`
+is the easiest of the nine and depends on nothing, so it is a fine place to
+start if `chunk_posting` feels daunting.
 
-The `/chat` route renders its error state rather than a live agent, and
-`/letters/:id` reports 501, until `run_agent` and `retrieval.search` exist.
-That is correct behaviour, not breakage.
+| # | Function | Unlocks |
+|---|---|---|
+| 1 | `chunk_posting` | `cli embed` turns 5,149 postings into vectors |
+| 2 | `chunk_profile_doc` | `cli ingest-profile` |
+| 3 | `dense_scores` | — (start here for a quick win) |
+| 4 | `bm25_scores` | — |
+| 5 | `fuse` | — |
+| 6 | `search` | **`/letters` works, the score bars render** |
+| 7 | `run_agent` | **`/chat` comes alive** |
+| 8 | the four tool descriptions | the agent picks tools *well* |
+| 9 | `recall_at_k`, `run_eval` | `cli eval` — measurement |
 
-Two phases were added to `plan.md` on 2026-08-30 at the author's request:
-**Phase 2.5** (company discovery) and **Phase 10** (application tracking from
-email, previously a v2 non-goal).
+Roughly 170 lines of Python in total, plus a hand-labelled
+`data/eval/queries.jsonl` for problem 9.
+
+**Agreed 2026-08-30:** once the author says a function is done, Claude rewrites
+it with its own best version and explains the changes. Until then rule 1 in
+CLAUDE.md is absolute. This exception is in CLAUDE.md too.
+
+`python dev.py` then <http://localhost:5173>. Vite binds to `localhost`, not
+`127.0.0.1` — checking the wrong one looks like the server is down.
 
 ---
 
@@ -82,11 +91,10 @@ Category B functions the author writes by hand, none of them started:
 `fuse`, `run_agent`, the four `TOOL_SCHEMAS` descriptions, `recall_at_k`,
 `run_eval`.
 
-**Everything else is done.** Each one has a caller waiting for it, a test
-asserting it still raises, and an error message naming it when something tries
-to run. Suggested order: `chunk_posting` (unblocks embedding), then
-`dense_scores` / `bm25_scores` / `fuse` / `search` (unblocks letters, eval and
-the trace), then `run_agent` (unblocks `/chat`).
+**Everything else is done.** Each one has a caller waiting for it, a test in
+`tests/test_category_b.py` asserting it still raises, an exercise suite in
+`exercises/` with 68 tests, and an error message naming it when something tries
+to run.
 
 ---
 
