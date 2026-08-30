@@ -29,6 +29,7 @@ __all__ = [
     "iso_from_epoch_ms",
     "iso_from_string",
     "make_id",
+    "normalize_text",
     "now_iso",
     "strip_html",
 ]
@@ -142,8 +143,22 @@ def strip_html(raw: str | None) -> str:
     parser = _TagStripper()
     parser.feed(unescaped)
     parser.close()
+    return normalize_text(parser.text())
 
-    text = parser.text().replace("\xa0", " ").replace("\r\n", "\n").replace("\r", "\n")
+
+def normalize_text(raw: str | None) -> str:
+    """Tidy whitespace in text that is already plain.
+
+    Lever and Ashby publish a ``descriptionPlain`` field, so their bodies never
+    pass through :func:`strip_html` and used to keep whatever whitespace the
+    company typed - mostly non-breaking spaces, which are invisible but are not
+    blank. A line holding only one looks like a paragraph break to a reader and
+    like content to code, which is exactly the kind of thing that quietly ruins
+    chunk boundaries.
+    """
+    if not raw:
+        return ""
+    text = raw.replace("\xa0", " ").replace("\r\n", "\n").replace("\r", "\n")
     lines = [_WHITESPACE_RUNS.sub(" ", line).strip() for line in text.split("\n")]
     return _BLANK_LINE_RUNS.sub("\n\n", "\n".join(lines)).strip()
 

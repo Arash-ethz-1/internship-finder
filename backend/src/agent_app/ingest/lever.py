@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..db import Posting
-from .normalize import build_posting, iso_from_epoch_ms, strip_html
+from .normalize import build_posting, iso_from_epoch_ms, normalize_text, strip_html
 
 SOURCE = "lever"
 
@@ -54,7 +54,7 @@ def _body(job: dict[str, Any]) -> str:
     """Reassemble the description, the bullet sections and the closing note."""
     parts: list[str] = []
 
-    intro = job.get("descriptionPlain") or strip_html(job.get("description"))
+    intro = normalize_text(job.get("descriptionPlain")) or strip_html(job.get("description"))
     if intro:
         parts.append(intro.strip())
 
@@ -67,7 +67,7 @@ def _body(job: dict[str, Any]) -> str:
         if block:
             parts.append(block)
 
-    closing = job.get("additionalPlain") or strip_html(job.get("additional"))
+    closing = normalize_text(job.get("additionalPlain")) or strip_html(job.get("additional"))
     if closing:
         parts.append(closing.strip())
 

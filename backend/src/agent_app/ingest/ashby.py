@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..db import Posting
-from .normalize import build_posting, iso_from_string, strip_html
+from .normalize import build_posting, iso_from_string, normalize_text, strip_html
 
 SOURCE = "ashby"
 
@@ -60,7 +60,7 @@ def parse(payload: Any, company: str) -> list[Posting]:
         if job.get("isListed") is False:
             continue
 
-        body = job.get("descriptionPlain") or strip_html(job.get("descriptionHtml"))
+        body = normalize_text(job.get("descriptionPlain")) or strip_html(job.get("descriptionHtml"))
         is_remote = job.get("isRemote")
 
         posting = build_posting(
