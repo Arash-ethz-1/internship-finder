@@ -8,24 +8,24 @@ along the way that the spec does not say).
 
 ---
 
-## Checkpoint — 2026-08-30, end of session 1
+## Checkpoint — 2026-08-30, session 2
 
-Done this session: Phases 1, 2, 3 and 2.5, plus the Lever EU fix. **150 tests
-pass, ruff clean.** 4,844 postings in the local database from 15 companies.
+Phases 1, 2, 2.5, 3, 6 and 7 done, plus the Lever EU fix. **187 tests pass,
+ruff clean.** 5,149 postings from 22 companies.
 
-**One thing left unverified:** `cli discover --from crawl` is written and unit
-tested, but `index.commoncrawl.org` became unreachable partway through the
-session (connect timeout from any client, not a header or code problem — the
-same query returned 1,610 Greenhouse and 1,920 Ashby tokens an hour earlier).
-Re-run it when the service is back:
+Discovery verified live through `--from file`: 15 niche robotics names in,
+7 verified out, spread across all three boards (ANYbotics on Lever, Skydio on
+Ashby, Agility on Greenhouse) — the cross-board search is what found them. A
+second run cost **zero** HTTP requests, which is the cache working.
+
+**Still unverified:** `discover --from crawl`. `index.commoncrawl.org` has been
+unreachable across two sessions (connect timeout from any client, not a code
+problem — the same query returned 1,610 Greenhouse and 1,920 Ashby tokens
+before it went down). Retry when it is back:
 
 ```
 uv run python -m agent_app.cli discover --from crawl --source ashby --limit 40
 ```
-
-`--from file` and `--from llm` do not touch Common Crawl and should work now.
-A niche-robotics test list is at
-`scratchpad/robotics.txt` if you want a quick trial of the targeted path.
 
 ## Resume here
 
@@ -33,8 +33,8 @@ A niche-robotics test list is at
 `chunk_posting`. It is the first Category B function and everything downstream
 waits on it. The docstring lists what must hold.
 
-**Claude:** Phase 2.5 company discovery, then the Lever EU host fix. Phase 4
-cannot start until `chunk_posting` exists.
+**Claude:** Phase 8, the frontend. The API it consumes is complete and
+serving real data. Phases 4 and 5 cannot start until `chunk_posting` exists.
 
 Two phases were added to `plan.md` on 2026-08-30 at the author's request:
 **Phase 2.5** (company discovery) and **Phase 10** (application tracking from
@@ -51,10 +51,10 @@ email, previously a v2 non-goal).
 | 3 | Core stubs (Category B signatures) | Claude | ✅ done | `49a8989` |
 | 3.5 | `chunk_posting`, `chunk_profile_doc` | **Arash** | ⬜ **your turn — start here** | |
 | 4 | Embeddings plumbing | Claude | ⬜ blocked on 3.5 | |
-| 5 | Profile corpus | Claude | ⬜ | |
-| 6 | Letter drafting | Claude | ⬜ | |
-| 7 | API | Claude | ⬜ | |
-| 8 | Frontend | Claude | ⬜ | |
+| 5 | Profile corpus | Claude | ⬜ blocked on 3.5 | |
+| 6 | Letter drafting | Claude | ✅ done | |
+| 7 | API | Claude | ✅ done | |
+| 8 | Frontend | Claude | ⬜ **next for Claude** | |
 | 9 | CLI and CI | Claude | ⬜ | |
 | 10 | Application tracking from email | Claude | ⬜ new, added 2026-08-30 | |
 | 2.5 | Company discovery | Claude | ✅ done (crawl path unverified live) | |

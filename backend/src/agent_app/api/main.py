@@ -1,8 +1,9 @@
 """FastAPI application factory.
 
-Phase 1 wires the app, CORS and a health check only. The routers in
-``routes_postings``, ``routes_chat`` and ``routes_letters`` are registered in
-Phase 7, once there is something behind them.
+Routes hold no business logic: they resolve parameters, call into ``core/`` or
+``db.py``, and serialise. ``create_app`` is a function rather than a
+module-level ``FastAPI()`` so tests can build a fresh app against a throwaway
+database.
 """
 
 from __future__ import annotations
@@ -11,6 +12,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..config import get_settings
+from . import routes_chat, routes_letters, routes_postings
+from .schemas import Health
 
 
 def create_app() -> FastAPI:
@@ -31,10 +34,14 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    @app.get("/api/health", tags=["meta"])
-    def health() -> dict[str, str]:
+    @app.get("/api/health", tags=["meta"], response_model=Health)
+    def health() -> Health:
         """Liveness probe. Confirms the app boots and settings resolve."""
-        return {"status": "ok", "version": app.version}
+        return Health(status="ok", version=app.version)
+
+    app.include_router(routes_postings.router)
+    app.include_router(routes_letters.router)
+    app.include_router(routes_chat.router)
 
     return app
 

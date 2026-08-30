@@ -149,6 +149,34 @@ def cmd_companies(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_draft_letter(args: argparse.Namespace) -> int:
+    """Draft a motivational letter for one posting."""
+    from .core.letters import LetterError, draft_letter
+
+    try:
+        letter = draft_letter(args.posting_id, k=args.chunks)
+    except NotImplementedError:
+        print(
+            "error: letter drafting needs retrieval.search, which is Category B "
+            "and not written yet.",
+            file=sys.stderr,
+        )
+        return 3
+    except (KeyError, LetterError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    print(f"wrote {letter.path}")
+    if letter.todos:
+        print(f"\n{len(letter.todos)} marker(s) left for you to fill in:")
+        for todo in letter.todos:
+            print(f"  {todo}")
+    print("\ngrounded in:")
+    for hit in letter.grounding:
+        print(f"  {hit.score:.4f}  {hit.profile_doc}#{hit.ordinal}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the top-level parser and its subcommands."""
     parser = argparse.ArgumentParser(
@@ -236,6 +264,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_companies.add_argument("--status", choices=["verified", "dead", "unresolved"])
     p_companies.add_argument("--source", choices=SOURCES)
     p_companies.set_defaults(func=cmd_companies)
+
+    p_letter = sub.add_parser(
+        "draft-letter",
+        help="draft a motivational letter for one posting",
+        description=(
+            "Retrieve the most relevant pieces of your own project write-ups and "
+            "draft a letter grounded in them. Any fact the model was not given "
+            "becomes a [TODO: ...] marker rather than an invention."
+        ),
+    )
+    p_letter.add_argument("posting_id", help='e.g. "greenhouse:4012345"')
+    p_letter.add_argument(
+        "--chunks",
+        type=int,
+        default=3,
+        help="how many profile extracts to ground the letter in (default 3)",
+    )
+    p_letter.set_defaults(func=cmd_draft_letter)
 
     return parser
 

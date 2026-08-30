@@ -35,7 +35,10 @@ def _posting_dict(posting: Posting, *, include_body: bool = False) -> dict[str, 
         "level": posting.level,
         "url": posting.url,
         "posted_at": posting.posted_at,
+        "deadline": posting.deadline,
         "source": posting.source,
+        "first_seen": posting.first_seen,
+        "last_seen": posting.last_seen,
     }
     if include_body:
         data["body"] = posting.body

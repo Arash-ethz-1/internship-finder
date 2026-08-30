@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 
 def now_iso() -> str:
@@ -216,6 +217,150 @@ def transaction(conn: sqlite3.Connection) -> Generator[sqlite3.Connection, None,
     except Exception:
         conn.rollback()
         raise
+
+
+@dataclass(frozen=True)
+class PostingFilters:
+    """What the dashboard's left rail can narrow the grid by."""
+
+    q: str | None = None  # free text over title and company
+    company: str | None = None
+    level: str | None = None
+    location: str | None = None
+    remote: bool | None = None
+    source: str | None = None
+    status: str | None = None  # a status, or "untriaged"
+    posted_after: str | None = None
+
+
+SORTABLE = {
+    "posted_at": "p.posted_at",
+    "company": "p.company",
+    "title": "p.title",
+    "level": "p.level",
+    "first_seen": "p.first_seen",
+}
+
+
+def _posting_where(filters: PostingFilters) -> tuple[str, list[Any]]:
+    """Build the shared WHERE clause for listing and counting."""
+    where: list[str] = []
+    params: list[Any] = []
+
+    if filters.q:
+        where.append("(p.title LIKE ? OR p.company LIKE ?)")
+        params.extend([f"%{filters.q}%", f"%{filters.q}%"])
+    if filters.company:
+        where.append("p.company = ?")
+        params.append(filters.company)
+    if filters.level:
+        where.append("p.level = ?")
+        params.append(filters.level)
+    if filters.location:
+        where.append("p.location LIKE ?")
+        params.append(f"%{filters.location}%")
+    if filters.remote is not None:
+        where.append("p.remote = ?")
+        params.append(int(filters.remote))
+    if filters.source:
+        where.append("p.source = ?")
+        params.append(filters.source)
+    if filters.posted_after:
+        where.append("p.posted_at >= ?")
+        params.append(filters.posted_after)
+    if filters.status == "untriaged":
+        where.append("a.posting_id IS NULL")
+    elif filters.status:
+        where.append("a.status = ?")
+        params.append(filters.status)
+
+    return (" WHERE " + " AND ".join(where) if where else "", params)
+
+
+def list_postings(
+    conn: sqlite3.Connection,
+    filters: PostingFilters,
+    *,
+    limit: int = 500,
+    offset: int = 0,
+    sort: str = "posted_at",
+    descending: bool = True,
+) -> tuple[list[sqlite3.Row], int]:
+    """Return one page of postings and the total matching count.
+
+    The status comes back with each row via a LEFT JOIN, so the grid never has
+    to issue a second query per row. A posting with no application row reports
+    ``untriaged`` rather than NULL.
+    """
+    clause, params = _posting_where(filters)
+    base = "FROM postings p LEFT JOIN applications a ON a.posting_id = p.id" + clause
+
+    total = conn.execute(f"SELECT count(*) {base}", params).fetchone()[0]
+
+    column = SORTABLE.get(sort, SORTABLE["posted_at"])
+    direction = "DESC" if descending else "ASC"
+    rows = conn.execute(
+        f"SELECT p.*, COALESCE(a.status, 'untriaged') AS status, a.note, a.letter_path "
+        f"{base} ORDER BY {column} {direction} NULLS LAST, p.id LIMIT ? OFFSET ?",
+        [*params, limit, offset],
+    ).fetchall()
+    return (rows, total)
+
+
+def stats(conn: sqlite3.Connection, recent_days: int = 30) -> dict[str, Any]:
+    """Counts for the pipeline view: by status, company, source and recency."""
+    by_status = {
+        row["status"]: row["n"]
+        for row in conn.execute(
+            "SELECT COALESCE(a.status, 'untriaged') AS status, count(*) AS n "
+            "FROM postings p LEFT JOIN applications a ON a.posting_id = p.id "
+            "GROUP BY status ORDER BY n DESC"
+        )
+    }
+    by_company = [
+        {"company": row["company"], "count": row["n"], "intern": row["interns"]}
+        for row in conn.execute(
+            "SELECT company, count(*) AS n, "
+            "sum(CASE WHEN level = 'intern' THEN 1 ELSE 0 END) AS interns "
+            "FROM postings GROUP BY company ORDER BY n DESC"
+        )
+    ]
+    by_source = {
+        row["source"]: row["n"]
+        for row in conn.execute("SELECT source, count(*) AS n FROM postings GROUP BY source")
+    }
+    by_level = {
+        row["level"]: row["n"]
+        for row in conn.execute("SELECT level, count(*) AS n FROM postings GROUP BY level")
+    }
+    recent = [
+        {"date": row["day"], "count": row["n"]}
+        for row in conn.execute(
+            "SELECT substr(posted_at, 1, 10) AS day, count(*) AS n FROM postings "
+            "WHERE posted_at IS NOT NULL GROUP BY day ORDER BY day DESC LIMIT ?",
+            (recent_days,),
+        )
+    ]
+    return {
+        "total": conn.execute("SELECT count(*) FROM postings").fetchone()[0],
+        "by_status": by_status,
+        "by_company": by_company,
+        "by_source": by_source,
+        "by_level": by_level,
+        "recent": list(reversed(recent)),
+    }
+
+
+def distinct_values(conn: sqlite3.Connection, column: str) -> list[str]:
+    """Distinct non-null values of one filterable column, for the left rail."""
+    if column not in {"company", "level", "source", "location"}:
+        raise ValueError(f"{column!r} is not a filterable column")
+    return [
+        row[0]
+        for row in conn.execute(
+            f"SELECT DISTINCT {column} FROM postings WHERE {column} IS NOT NULL ORDER BY {column}"
+        )
+    ]
 
 
 def table_names(conn: sqlite3.Connection) -> list[str]:
