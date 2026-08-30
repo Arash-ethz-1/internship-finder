@@ -281,6 +281,59 @@ run if its board 404s.
 least 3 companies across 2 sources. Running it twice does not change the row
 count. Print a summary table of company, fetched, new, updated.
 
+### Phase 2.5 — Company discovery (Category A, implement fully)
+
+Fifteen hand-written companies is a fixture, not a job search. This phase
+replaces `companies.toml` as the source of truth with a `companies` table that
+grows.
+
+```
+companies
+  source TEXT                  -- greenhouse | lever | ashby
+  token TEXT
+  name TEXT                    -- from the board itself, not guessed
+  status TEXT                  -- verified | dead | unresolved
+  job_count INTEGER
+  api_host TEXT                -- which host answered (Lever has US and EU)
+  discovered_by TEXT           -- seed | crawl | llm | file
+  first_verified TEXT
+  last_checked TEXT
+  PRIMARY KEY (source, token)
+```
+
+The rule that makes this worth building: **the model proposes, HTTP disposes.**
+No token is ever trusted because a model said it; a token is real when the
+board returns 200. Equally important, failures are recorded as
+`dead`/`unresolved` so the same candidate is never checked twice.
+
+Three candidate sources, all feeding the same verifier:
+
+- **`--from crawl`** — the Common Crawl URL index is a de-facto directory. One
+  query for `boards.greenhouse.io/*` yields ~1,600 distinct tokens and
+  `jobs.ashbyhq.com/*` ~1,900. Needs no API key. Lever is only partly covered
+  because `jobs.lever.co` is disallowed in robots.txt, though
+  `jobs.eu.lever.co` is indexed.
+- **`--from llm`** — a single Claude call for company *names* matching a
+  description ("robotics companies in Switzerland that hire interns"). This is
+  the only source that can target a niche. Ask for names, never for tokens:
+  names are reliable, and a model's knowledge of which ATS a company uses goes
+  stale as companies migrate.
+- **`--from file`** — one company name per line. Keeps the whole pipeline
+  usable with no API key at all.
+
+Names arrive as prose, so derive token candidates mechanically
+(`"Match Group"` → `matchgroup`, `match-group`, `match`) and try each against
+all three boards. Take the display name from the board's own response
+(`GET /v1/boards/{token}` returns `{"name": "Stripe"}`) rather than from the
+model.
+
+Politeness rules from Phase 2 apply unchanged: 1 request/second, real
+User-Agent, retries, and a 404 is data rather than an error.
+
+**Check:** `cli discover --from crawl --source ashby --limit 50` adds verified
+companies and records the failures. Running it again checks zero of the same
+candidates. `cli ingest` reads the table and picks up the new companies.
+
 ### Phase 3 — Core stubs (Category B)
 
 Create these files complete except for the listed bodies.
@@ -492,6 +545,58 @@ on push. No deploy.
 **Check:** `--help` documents every subcommand. One command starts both
 servers. CI is green.
 
+### Phase 10 — Application tracking from email (Category A)
+
+Previously a v2 non-goal, pulled into scope. The pipeline already records
+status by hand; this closes the loop by reading the replies.
+
+Gmail API, read-only scope (`gmail.readonly`), OAuth device flow with the
+refresh token stored in `data/` and gitignored. No other mailbox provider, no
+IMAP passwords, and nothing is ever sent.
+
+```
+email_matches
+  id INTEGER PRIMARY KEY
+  message_id TEXT UNIQUE       -- Gmail's id; makes re-runs idempotent
+  posting_id TEXT              -- nullable until matched
+  company_guess TEXT
+  received_at TEXT
+  subject TEXT
+  classification TEXT          -- rejection | interview | offer | other
+  confidence REAL
+  suggested_status TEXT
+  applied INTEGER DEFAULT 0    -- has the user accepted this suggestion
+  created_at TEXT
+```
+
+Three steps, each fallible and each therefore separate:
+
+1. **Fetch.** Messages newer than the earliest `applications.updated_at`,
+   subject and snippet only. Never the full body unless matched — no reason to
+   pull an entire inbox into a local database.
+2. **Match to a posting.** Companies almost never quote a posting id, so this
+   is fuzzy: sender domain against the company's board URL, then company name
+   against the subject. An unmatched email is stored with `posting_id NULL`
+   rather than guessed at.
+3. **Classify.** One model call per candidate email returning
+   `rejection | interview | offer | other` plus a confidence. Cheap, and the
+   only step that needs judgement.
+
+**Nothing is applied automatically.** The classifier produces a *suggestion*
+that the user accepts or rejects in the dashboard, and accepting is what writes
+the `applications` row and its `status_history` entry with a note naming the
+email. A wrongly auto-applied `rejected` is worse than no automation at all:
+you stop checking a company that actually wanted to interview you. The
+`status_history` note records that the change came from an email, so an
+automated mistake is always traceable.
+
+New route `GET /api/inbox` lists pending suggestions; `POST /api/inbox/{id}/accept`
+applies one. A fourth dashboard surface shows them as a review queue.
+
+**Check:** `cli sync-email` fetches, matches and classifies without changing a
+single `applications` row. Suggestions appear in the dashboard, and accepting
+one moves the status and writes history naming the message.
+
 ---
 
 ## Non-goals
@@ -500,7 +605,6 @@ Do not build these, do not scaffold them, do not leave TODOs for them:
 
 - Automated submission of applications to any job board
 - Browser automation of any kind (no Playwright, no Selenium)
-- Gmail or any email integration (planned for v2, but not now)
 - A vector database, an ANN index, or a reranker
 - Authentication, multi-user support, or deployment
 - Any agent framework or orchestration library

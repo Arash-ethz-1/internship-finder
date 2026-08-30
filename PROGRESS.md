@@ -10,12 +10,16 @@ along the way that the spec does not say).
 
 ## Resume here
 
-**Next action: Phase 3 — Category B stubs.** Create `core/chunking.py`,
-`retrieval.py`, `agent.py`, `tools.py` and `evaluate.py` complete except for
-the Category B bodies, which stay as `raise NotImplementedError`.
+**Arash:** open `backend/src/agent_app/core/chunking.py` and write
+`chunk_posting`. It is the first Category B function and everything downstream
+waits on it. The docstring lists what must hold.
 
-After Phase 3 the ball is in the author's court: **Arash writes
-`chunk_posting` and `chunk_profile_doc` before Phase 4 starts.**
+**Claude:** Phase 2.5 company discovery, then the Lever EU host fix. Phase 4
+cannot start until `chunk_posting` exists.
+
+Two phases were added to `plan.md` on 2026-08-30 at the author's request:
+**Phase 2.5** (company discovery) and **Phase 10** (application tracking from
+email, previously a v2 non-goal).
 
 ---
 
@@ -25,15 +29,16 @@ After Phase 3 the ball is in the author's court: **Arash writes
 |---|---|---|---|---|
 | 1 | Scaffold | Claude | ✅ done | `872e4a5` |
 | 2 | Ingestion | Claude | ✅ done | `403a5c8` |
-| 3 | Core stubs (Category B signatures) | Claude | ⬜ **next** | |
-| 3.5 | `chunk_posting`, `chunk_profile_doc` | **Arash** | ⬜ blocked on Phase 3 | |
+| 3 | Core stubs (Category B signatures) | Claude | ✅ done | `49a8989` |
+| 3.5 | `chunk_posting`, `chunk_profile_doc` | **Arash** | ⬜ **your turn — start here** | |
 | 4 | Embeddings plumbing | Claude | ⬜ blocked on 3.5 | |
 | 5 | Profile corpus | Claude | ⬜ | |
 | 6 | Letter drafting | Claude | ⬜ | |
 | 7 | API | Claude | ⬜ | |
 | 8 | Frontend | Claude | ⬜ | |
 | 9 | CLI and CI | Claude | ⬜ | |
-| — | Company discovery (not in plan.md) | Claude | ⏸ parked, agreed for after Phase 3 | |
+| 10 | Application tracking from email | Claude | ⬜ new, added 2026-08-30 | |
+| 2.5 | Company discovery | Claude | ⬜ **in progress** | |
 
 Category B functions the author writes by hand, none of them started:
 `chunk_posting`, `chunk_profile_doc`, `search`, `dense_scores`, `bm25_scores`,
