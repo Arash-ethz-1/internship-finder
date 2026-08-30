@@ -19,7 +19,19 @@ import re
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 
-from ..db import Posting
+from ..db import Posting, now_iso
+
+__all__ = [
+    "body_hash",
+    "build_posting",
+    "infer_level",
+    "infer_remote",
+    "iso_from_epoch_ms",
+    "iso_from_string",
+    "make_id",
+    "now_iso",
+    "strip_html",
+]
 
 # Tags that should leave a line break behind when they are stripped, so the
 # plain text keeps the shape of the original list or paragraph.
@@ -172,11 +184,6 @@ def infer_remote(location: str | None, explicit: bool | None = None) -> bool:
     if _NOT_REMOTE_WORDS.search(location):
         return False
     return bool(_REMOTE_WORDS.search(location))
-
-
-def now_iso() -> str:
-    """Current time as UTC ISO-8601, e.g. ``2026-08-30T12:34:56Z``."""
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def iso_from_string(value: str | None) -> str | None:

@@ -16,7 +16,19 @@ import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+
+
+def now_iso() -> str:
+    """Current time as UTC ISO-8601, e.g. ``2026-08-30T12:34:56Z``.
+
+    Every timestamp written to this database goes through here, so
+    ``first_seen``, ``updated_at`` and ``changed_at`` are all directly
+    comparable as strings.
+    """
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 
 # The full status set from PLAN.md's data model. `interested` is the entry
 # point; a posting with no `applications` row at all is untriaged, which is a
