@@ -51,11 +51,16 @@ class FetchFailed(Exception):
 
 @dataclass(frozen=True)
 class CompanyEntry:
-    """One line of ``companies.toml``."""
+    """One company to fetch, from ``companies.toml`` or the ``companies`` table.
+
+    ``api_host`` pins which host answered last time. Lever runs two, so
+    remembering the answer saves a wasted 404 on every subsequent run.
+    """
 
     source: str
     token: str
     name: str
+    api_host: str | None = None
 
 
 @dataclass
@@ -67,6 +72,7 @@ class CompanyResult:
     new: int = 0
     updated: int = 0
     rechunked: int = 0
+    api_host: str | None = None
     error: str | None = None
 
     @property
@@ -175,6 +181,23 @@ class PoliteClient:
 
     def get_json(self, url: str) -> Any:
         """GET a URL and decode JSON, retrying transient failures."""
+        response = self.get(url)
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise FetchFailed(f"Invalid JSON from {url}: {exc}") from exc
+
+    def get_text(self, url: str, params: dict[str, str] | None = None) -> str:
+        """GET a URL and return the body as text.
+
+        The Common Crawl index answers in JSON-lines rather than JSON, so it
+        needs this rather than :meth:`get_json` — but it wants the same
+        politeness and the same retries.
+        """
+        return self.get(url, params).text
+
+    def get(self, url: str, params: dict[str, str] | None = None) -> httpx.Response:
+        """GET a URL, waiting our turn and retrying transient failures."""
         last_error: str = "unknown error"
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -182,7 +205,7 @@ class PoliteClient:
             self._last_request = time.monotonic()
 
             try:
-                response = self._client.get(url)
+                response = self._client.get(url, params=params)
             except httpx.RequestError as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
                 log.warning("attempt %d/%d for %s failed: %s", attempt, MAX_ATTEMPTS, url, exc)
@@ -202,10 +225,7 @@ class PoliteClient:
                 elif response.is_error:
                     raise FetchFailed(f"HTTP {response.status_code} for {url}")
                 else:
-                    try:
-                        return response.json()
-                    except ValueError as exc:
-                        raise FetchFailed(f"Invalid JSON from {url}: {exc}") from exc
+                    return response
 
             if attempt < MAX_ATTEMPTS:
                 backoff = self._min_interval * (2 ** (attempt - 1))
@@ -214,12 +234,35 @@ class PoliteClient:
         raise FetchFailed(f"{url} failed after {MAX_ATTEMPTS} attempts ({last_error})")
 
 
-def fetch_company(client: PoliteClient, entry: CompanyEntry) -> list[Posting]:
-    """Fetch and parse one company's board."""
+def hosts_for(entry: CompanyEntry) -> tuple[str, ...]:
+    """Which hosts to try for this company, best guess first."""
     module = PARSERS[entry.source]
-    url = module.build_url(entry.token)
-    payload = client.get_json(url)
-    return module.parse(payload, entry.name)
+    if entry.api_host:
+        return (entry.api_host,)
+    return tuple(module.HOSTS)
+
+
+def fetch_company(client: PoliteClient, entry: CompanyEntry) -> tuple[list[Posting], str]:
+    """Fetch and parse one company's board, returning the host that answered.
+
+    A board is only declared missing once *every* host has 404'd. Lever runs a
+    separate EU API, and a company on it is invisible to the US host.
+    """
+    module = PARSERS[entry.source]
+    hosts = hosts_for(entry)
+
+    for index, host in enumerate(hosts):
+        url = module.build_url(entry.token, host)
+        try:
+            payload = client.get_json(url)
+        except BoardNotFound:
+            if index == len(hosts) - 1:
+                raise
+            log.info("%s not on %s, trying next host", entry.token, host)
+            continue
+        return module.parse(payload, entry.name), host
+
+    raise BoardNotFound(f"no host served {entry.source}:{entry.token}")
 
 
 def upsert_postings(
@@ -321,7 +364,7 @@ def ingest_company(
     """Run one company end to end, turning any failure into a reported result."""
     result = CompanyResult(entry=entry)
     try:
-        postings = fetch_company(client, entry)
+        postings, host = fetch_company(client, entry)
     except BoardNotFound:
         result.error = "board not found (404) — check the token"
         log.warning("%s: %s", entry.name, result.error)
@@ -331,8 +374,17 @@ def ingest_company(
         log.warning("%s: %s", entry.name, result.error)
         return result
 
+    result.api_host = host
     result.fetched = len(postings)
     result.new, result.updated, result.rechunked = upsert_postings(conn, postings, seen_at=seen_at)
+
+    # Remember which host answered so the next run does not re-probe.
+    conn.execute(
+        "UPDATE companies SET api_host = ?, job_count = ?, last_checked = ? "
+        "WHERE source = ? AND token = ?",
+        (host, result.fetched, seen_at or now_iso(), entry.source, entry.token),
+    )
+    conn.commit()
     return result
 
 

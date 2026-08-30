@@ -24,6 +24,8 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = BACKEND_DIR.parent
 
 DEFAULT_AGENT_MODEL = "claude-opus-5"
+# Discovery just lists company names, so it does not need the agent's model.
+DEFAULT_DISCOVERY_MODEL = "claude-sonnet-5"
 DEFAULT_EMBEDDING_MODEL = "voyage-3.5"
 DEFAULT_EMBEDDING_DIM = 1024
 
@@ -52,6 +54,7 @@ class Settings:
     voyage_api_key: str | None
 
     agent_model: str
+    discovery_model: str
     embedding_model: str
     embedding_dim: int
 
@@ -120,6 +123,7 @@ def load_settings() -> Settings:
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
         voyage_api_key=os.getenv("VOYAGE_API_KEY") or None,
         agent_model=os.getenv("AGENT_MODEL", DEFAULT_AGENT_MODEL),
+        discovery_model=os.getenv("DISCOVERY_MODEL", DEFAULT_DISCOVERY_MODEL),
         embedding_model=os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
         embedding_dim=int(os.getenv("EMBEDDING_DIM", str(DEFAULT_EMBEDDING_DIM))),
         api_host=os.getenv("API_HOST", "127.0.0.1"),

@@ -159,7 +159,27 @@ CREATE TABLE IF NOT EXISTS status_history (
 );
 
 CREATE INDEX IF NOT EXISTS idx_status_history_posting ON status_history(posting_id);
+
+CREATE TABLE IF NOT EXISTS companies (
+    source         TEXT NOT NULL,          -- greenhouse | lever | ashby
+    token          TEXT NOT NULL,
+    name           TEXT,
+    status         TEXT NOT NULL,          -- verified | dead | unresolved
+    job_count      INTEGER,
+    api_host       TEXT,                   -- which host answered; Lever has two
+    discovered_by  TEXT NOT NULL,          -- seed | crawl | llm | file
+    first_verified TEXT,
+    last_checked   TEXT NOT NULL,
+    PRIMARY KEY (source, token)
+);
+
+CREATE INDEX IF NOT EXISTS idx_companies_status ON companies(status);
 """
+
+# A company row is one of these. `unresolved` means we had a name, tried every
+# derived token on every board, and found nothing — recorded so the same
+# candidate is never checked twice.
+COMPANY_STATUSES: tuple[str, ...] = ("verified", "dead", "unresolved")
 
 
 def connect(db_path: Path | str) -> sqlite3.Connection:

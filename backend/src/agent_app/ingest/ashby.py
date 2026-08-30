@@ -17,12 +17,35 @@ from ..db import Posting
 from .normalize import build_posting, iso_from_string, strip_html
 
 SOURCE = "ashby"
-URL_TEMPLATE = "https://api.ashbyhq.com/posting-api/job-board/{token}?includeCompensation=true"
+
+HOSTS: tuple[str, ...] = ("api.ashbyhq.com",)
+DEFAULT_HOST = HOSTS[0]
+
+URL_TEMPLATE = "https://{host}/posting-api/job-board/{token}?includeCompensation=true"
 
 
-def build_url(token: str) -> str:
+def build_url(token: str, host: str | None = None) -> str:
     """The endpoint for one company's board."""
-    return URL_TEMPLATE.format(token=token)
+    return URL_TEMPLATE.format(host=host or DEFAULT_HOST, token=token)
+
+
+def verify_url(token: str, host: str | None = None) -> str:
+    """Cheapest URL that proves the board exists. Ashby has no metadata
+    endpoint, so this is the board itself, without compensation data."""
+    host = host or DEFAULT_HOST
+    return f"https://{host}/posting-api/job-board/{token}"
+
+
+def parse_verification(payload: Any) -> tuple[str | None, int | None]:
+    """Count the listed jobs. Ashby does not publish a company display name."""
+    if isinstance(payload, dict):
+        jobs = payload.get("jobs")
+        if isinstance(jobs, list):
+            return (
+                None,
+                sum(1 for j in jobs if isinstance(j, dict) and j.get("isListed") is not False),
+            )
+    return (None, None)
 
 
 def parse(payload: Any, company: str) -> list[Posting]:

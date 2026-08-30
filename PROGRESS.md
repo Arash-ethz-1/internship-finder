@@ -8,6 +8,25 @@ along the way that the spec does not say).
 
 ---
 
+## Checkpoint — 2026-08-30, end of session 1
+
+Done this session: Phases 1, 2, 3 and 2.5, plus the Lever EU fix. **150 tests
+pass, ruff clean.** 4,844 postings in the local database from 15 companies.
+
+**One thing left unverified:** `cli discover --from crawl` is written and unit
+tested, but `index.commoncrawl.org` became unreachable partway through the
+session (connect timeout from any client, not a header or code problem — the
+same query returned 1,610 Greenhouse and 1,920 Ashby tokens an hour earlier).
+Re-run it when the service is back:
+
+```
+uv run python -m agent_app.cli discover --from crawl --source ashby --limit 40
+```
+
+`--from file` and `--from llm` do not touch Common Crawl and should work now.
+A niche-robotics test list is at
+`scratchpad/robotics.txt` if you want a quick trial of the targeted path.
+
 ## Resume here
 
 **Arash:** open `backend/src/agent_app/core/chunking.py` and write
@@ -38,7 +57,8 @@ email, previously a v2 non-goal).
 | 8 | Frontend | Claude | ⬜ | |
 | 9 | CLI and CI | Claude | ⬜ | |
 | 10 | Application tracking from email | Claude | ⬜ new, added 2026-08-30 | |
-| 2.5 | Company discovery | Claude | ⬜ **in progress** | |
+| 2.5 | Company discovery | Claude | ✅ done (crawl path unverified live) | |
+| — | Lever EU API host fix | Claude | ✅ done | |
 
 Category B functions the author writes by hand, none of them started:
 `chunk_posting`, `chunk_profile_doc`, `search`, `dense_scores`, `bm25_scores`,

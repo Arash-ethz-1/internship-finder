@@ -17,12 +17,35 @@ from ..db import Posting
 from .normalize import build_posting, iso_from_string, strip_html
 
 SOURCE = "greenhouse"
-URL_TEMPLATE = "https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true"
+
+HOSTS: tuple[str, ...] = ("boards-api.greenhouse.io",)
+DEFAULT_HOST = HOSTS[0]
+
+URL_TEMPLATE = "https://{host}/v1/boards/{token}/jobs?content=true"
+BOARD_URL_TEMPLATE = "https://{host}/v1/boards/{token}"
 
 
-def build_url(token: str) -> str:
+def build_url(token: str, host: str | None = None) -> str:
     """The endpoint for one company's board."""
-    return URL_TEMPLATE.format(token=token)
+    return URL_TEMPLATE.format(host=host or DEFAULT_HOST, token=token)
+
+
+def verify_url(token: str, host: str | None = None) -> str:
+    """Cheapest URL that proves the board exists.
+
+    The board metadata endpoint returns a few bytes and the company's real
+    display name, where fetching every job with its description would return
+    megabytes. Discovery checks thousands of tokens, so this matters.
+    """
+    return BOARD_URL_TEMPLATE.format(host=host or DEFAULT_HOST, token=token)
+
+
+def parse_verification(payload: Any) -> tuple[str | None, int | None]:
+    """Read the authoritative display name out of the board metadata."""
+    if isinstance(payload, dict):
+        name = payload.get("name")
+        return (name.strip() if isinstance(name, str) and name.strip() else None, None)
+    return (None, None)
 
 
 def parse(payload: Any, company: str) -> list[Posting]:

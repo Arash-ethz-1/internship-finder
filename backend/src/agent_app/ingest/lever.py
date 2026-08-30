@@ -18,12 +18,36 @@ from ..db import Posting
 from .normalize import build_posting, iso_from_epoch_ms, strip_html
 
 SOURCE = "lever"
-URL_TEMPLATE = "https://api.lever.co/v0/postings/{token}?mode=json"
+
+# Lever runs two independent API hosts and a token exists on exactly one of
+# them. `seb` and `mobileye` are 404 on api.lever.co and 200 on api.eu.lever.co,
+# so checking only the US host silently loses every EU-hosted company.
+HOSTS: tuple[str, ...] = ("api.lever.co", "api.eu.lever.co")
+DEFAULT_HOST = HOSTS[0]
+
+URL_TEMPLATE = "https://{host}/v0/postings/{token}?mode=json"
 
 
-def build_url(token: str) -> str:
-    """The endpoint for one company's postings."""
-    return URL_TEMPLATE.format(token=token)
+def build_url(token: str, host: str | None = None) -> str:
+    """The endpoint for one company's postings on a given host."""
+    return URL_TEMPLATE.format(host=host or DEFAULT_HOST, token=token)
+
+
+def verify_url(token: str, host: str | None = None) -> str:
+    """Cheapest URL that proves the board exists. Lever has no metadata
+    endpoint, so this is the postings list itself."""
+    return build_url(token, host)
+
+
+def parse_verification(payload: Any) -> tuple[str | None, int | None]:
+    """Read a display name and job count out of a verification response.
+
+    Lever does not publish the company's display name anywhere, so the caller
+    keeps whatever name it already had.
+    """
+    if isinstance(payload, list):
+        return (None, len(payload))
+    return (None, None)
 
 
 def _body(job: dict[str, Any]) -> str:

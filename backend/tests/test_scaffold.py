@@ -25,7 +25,13 @@ def test_missing_keys_raise_a_message_naming_the_variable(settings: Settings) ->
 
 
 def test_init_db_creates_every_table(conn: sqlite3.Connection) -> None:
-    assert table_names(conn) == ["applications", "chunks", "postings", "status_history"]
+    assert table_names(conn) == [
+        "applications",
+        "chunks",
+        "companies",
+        "postings",
+        "status_history",
+    ]
 
 
 def test_status_set_matches_the_plan() -> None:
