@@ -8,6 +8,9 @@ already a hard requirement, so the task runner is a Python script.
     python dev.py            # API + Vite, streaming both logs
     python dev.py api        # API only
     python dev.py web        # Vite only
+    python dev.py ingest     # fetch postings from every verified board
+    python dev.py embed      # embed any chunks that have no vector yet
+    python dev.py status     # what is in the database
     python dev.py test       # ruff check + pytest
     python dev.py lint       # ruff check + ruff format --check + tsc + eslint
 
@@ -104,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         "task",
         nargs="?",
         default="all",
-        choices=["all", "api", "web", "test", "lint"],
+        choices=["all", "api", "web", "test", "lint", "ingest", "embed", "status"],
         help="what to run (default: all)",
     )
     args = parser.parse_args(argv)
@@ -127,6 +130,17 @@ def main(argv: list[str] | None = None) -> int:
                 ("ruff format", ["uv", "run", "ruff", "format", "--check", "."], BACKEND),
                 ("tsc", [NPM, "run", "typecheck"], FRONTEND),
                 ("eslint", [NPM, "run", "lint"], FRONTEND),
+            ]
+        )
+
+    if args.task in {"ingest", "embed", "status"}:
+        return run_sequence(
+            [
+                (
+                    args.task,
+                    ["uv", "run", "python", "-m", "agent_app.cli", args.task],
+                    BACKEND,
+                )
             ]
         )
 

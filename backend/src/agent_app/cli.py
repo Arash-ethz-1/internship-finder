@@ -23,7 +23,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .config import ConfigError, get_settings
-from .db import SOURCES, table_names
+from .db import SOURCES, stats, table_names
 from .ingest import (
     Candidate,
     PoliteClient,
@@ -177,6 +177,130 @@ def cmd_draft_letter(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_status(_args: argparse.Namespace) -> int:
+    """Show the pipeline: what is in the database and where it stands."""
+    settings = get_settings()
+    conn = get_db()
+    summary = stats(conn)
+
+    if summary["total"] == 0:
+        print(f"No postings yet in {settings.db_path}")
+        print("Fetch some with:  cli ingest")
+        return 0
+
+    print(f"{summary['total']:,} postings  ·  {settings.db_path}")
+
+    print("\nby status")
+    for status, count in summary["by_status"].items():
+        bar = "█" * min(40, round(count / max(summary["total"], 1) * 40)) or "▏"
+        print(f"  {status:16} {count:6,}  {bar}")
+
+    print("\nby level")
+    for level, count in sorted(summary["by_level"].items(), key=lambda kv: -kv[1]):
+        print(f"  {level:16} {count:6,}")
+
+    print("\nby source")
+    for source, count in sorted(summary["by_source"].items(), key=lambda kv: -kv[1]):
+        print(f"  {source:16} {count:6,}")
+
+    print("\ntop companies")
+    for row in summary["by_company"][:10]:
+        interns = f"{row['intern']:>4} intern" if row["intern"] else ""
+        print(f"  {row['company']:24} {row['count']:6,}  {interns}")
+
+    chunks = conn.execute("SELECT count(*) FROM chunks").fetchone()[0]
+    embedded = conn.execute("SELECT count(*) FROM chunks WHERE vector_row IS NOT NULL").fetchone()[
+        0
+    ]
+    print(f"\nchunks: {chunks:,}  ({embedded:,} embedded)")
+    if chunks == 0:
+        print("  no chunks yet — chunk_posting is Category B and not written")
+
+    recent = conn.execute(
+        "SELECT posting_id, from_status, to_status, changed_at FROM status_history "
+        "ORDER BY id DESC LIMIT 5"
+    ).fetchall()
+    if recent:
+        print("\nrecent changes")
+        for row in recent:
+            print(
+                f"  {row['changed_at'][:10]}  {row['posting_id']:28} "
+                f"{row['from_status'] or 'untriaged'} → {row['to_status']}"
+            )
+    return 0
+
+
+def cmd_eval(args: argparse.Namespace) -> int:
+    """Measure retrieval against the labelled query set."""
+    from .core.evaluate import load_eval_set, run_eval
+
+    settings = get_settings()
+    settings.ensure_dirs()
+    path = Path(args.path) if args.path else settings.eval_dir / "queries.jsonl"
+
+    try:
+        queries = load_eval_set(path)
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    print(f"{len(queries)} labelled queries from {path}")
+    try:
+        result = run_eval(queries)
+    except NotImplementedError:
+        print(
+            "error: evaluation needs recall_at_k and run_eval, which are Category B "
+            "and not written yet.",
+            file=sys.stderr,
+        )
+        return 3
+    print(result.format())
+    return 0
+
+
+def cmd_chat(args: argparse.Namespace) -> int:
+    """A REPL over the agent loop."""
+    from .core.agent import DoneEvent, TextEvent, ToolCallEvent, ToolResultEvent, run_agent
+    from .core.tools import descriptions_written
+
+    if not descriptions_written():
+        print("warning: the tool descriptions are still placeholders, so the model")
+        print("         will choose tools badly. See core/tools.py TOOL_SCHEMAS.\n")
+
+    history: list[dict[str, object]] = []
+    print("Ask a question. Ctrl-C or an empty line to quit.\n")
+
+    while True:
+        try:
+            message = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
+        if not message:
+            return 0
+
+        try:
+            for event in run_agent(message, history, args.max_iters):
+                if isinstance(event, ToolCallEvent):
+                    print(f"  ▸ {event.name} {event.input}")
+                elif isinstance(event, ToolResultEvent):
+                    print(f"    └ {event.ms}ms")
+                elif isinstance(event, TextEvent):
+                    print(event.delta, end="", flush=True)
+                elif isinstance(event, DoneEvent):
+                    print(f"\n  [{event.result.iters} iterations]\n")
+                    history = event.result.history
+        except NotImplementedError:
+            print(
+                "error: the agent loop needs run_agent, which is Category B and not written yet.",
+                file=sys.stderr,
+            )
+            return 3
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the top-level parser and its subcommands."""
     parser = argparse.ArgumentParser(
@@ -283,11 +407,54 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_letter.set_defaults(func=cmd_draft_letter)
 
+    p_status = sub.add_parser(
+        "status",
+        help="show the pipeline: counts by status, level, source and company",
+        description="Summarise what is in the database and where each posting stands.",
+    )
+    p_status.set_defaults(func=cmd_status)
+
+    p_eval = sub.add_parser(
+        "eval",
+        help="measure retrieval against the labelled query set",
+        description=(
+            "Run every labelled query through search and report mean recall at each k. "
+            "Needs data/eval/queries.jsonl, one JSON object per line: "
+            '{"query": "...", "relevant_posting_ids": ["source:id", ...]}'
+        ),
+    )
+    p_eval.add_argument("--path", help="eval set to use (default data/eval/queries.jsonl)")
+    p_eval.set_defaults(func=cmd_eval)
+
+    p_chat = sub.add_parser(
+        "chat",
+        help="a REPL over the agent loop",
+        description="Ask the agent questions from the terminal, with its tool calls shown.",
+    )
+    p_chat.add_argument("--max-iters", type=int, default=12, help="tool-use rounds (default 12)")
+    p_chat.set_defaults(func=cmd_chat)
+
+    parser.epilog = (
+        "Not yet available: `embed` arrives with phase 4 and `ingest-profile` with "
+        "phase 5. Both wait on the Category B chunking functions."
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse arguments and dispatch. Returns a process exit code."""
+    # Windows consoles default to cp1252, which cannot encode the bar glyphs
+    # `status` prints. Without this the command dies with UnicodeEncodeError
+    # partway through its own output. `errors="replace"` means a console that
+    # still cannot render a glyph shows a placeholder rather than crashing.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
+
     parser = build_parser()
     args = parser.parse_args(argv)
 

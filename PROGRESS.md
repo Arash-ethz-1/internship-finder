@@ -4,7 +4,7 @@ Running state of the project. `plan.md` is the spec (what we intend to build);
 this file is the log (what is actually built, what is next, and what we decided
 along the way that the spec does not say).
 
-**Last updated:** 2026-08-30, end of Phase 2.
+**Last updated:** 2026-08-30, end of Phase 9.
 
 ---
 
@@ -33,8 +33,10 @@ uv run python -m agent_app.cli discover --from crawl --source ashby --limit 40
 `chunk_posting`. It is the first Category B function and everything downstream
 waits on it. The docstring lists what must hold.
 
-**Claude:** Phase 9 (CLI and CI) is the only phase left that is not blocked.
-Phases 4 and 5 cannot start until `chunk_posting` exists.
+**Claude:** every phase that does not need Category B is done. Phase 4
+(embeddings plumbing) is next and is writable without chunking — it embeds
+whatever chunks exist, so it can be built and tested against synthetic chunks
+and only becomes useful once `chunk_posting` fills the table.
 
 `python dev.py` then <http://localhost:5173>. Note Vite binds to `localhost`,
 not `127.0.0.1` — checking the wrong one looks like the server is down.
@@ -62,7 +64,7 @@ email, previously a v2 non-goal).
 | 6 | Letter drafting | Claude | ✅ done | |
 | 7 | API | Claude | ✅ done | |
 | 8 | Frontend | Claude | ✅ done | |
-| 9 | CLI and CI | Claude | ⬜ | |
+| 9 | CLI and CI | Claude | ✅ done | |
 | 10 | Application tracking from email | Claude | ⬜ new, added 2026-08-30 | |
 | 2.5 | Company discovery | Claude | ✅ done (crawl path unverified live) | |
 | — | Lever EU API host fix | Claude | ✅ done | |
@@ -122,39 +124,51 @@ Small, deliberate, and worth knowing before someone "corrects" them.
   official one is Next.js-specific and does not work under Vite. Font families
   are `"Geist Variable"` and `"Geist Mono Variable"`.
 - **Phase 1 shipped tests** where the plan allowed an empty suite.
+- **`cli` reconfigures stdout to UTF-8.** Windows consoles default to cp1252
+  and `status` died with UnicodeEncodeError partway through its own output.
 
 ---
 
 ## What actually works right now
 
 ```
-uv run python -m agent_app.cli init-db     # create data/postings.db
-uv run python -m agent_app.cli ingest      # fetch all 15 boards
-uv run python -m agent_app.cli ingest --source ashby --company OpenAI
-python dev.py api                          # /api/health and /docs only
-python dev.py test                         # ruff + pytest
+python dev.py                 # API on :8000 and Vite on :5173
+python dev.py test            # ruff + pytest
+python dev.py lint            # ruff + format + tsc + eslint
+
+cd backend
+uv run python -m agent_app.cli --help
+uv run python -m agent_app.cli ingest                    # fetch every board
+uv run python -m agent_app.cli discover --from file --file names.txt
+uv run python -m agent_app.cli status                    # the pipeline
+uv run python -m agent_app.cli companies                 # what was verified
 ```
 
-Nothing else exists yet. `/api/postings`, `/chat`, search, embeddings, the
-dashboard: none of it.
+The dashboard at <http://localhost:5173> is real: `/postings` lists 5,149
+postings with working filters, keyboard navigation and status changes that
+persist; `/stats` shows the pipeline. `/chat` and `/letters/:id` render honest
+error states, because they need the Category B functions.
 
-**Data as of the last ingest run:** 4,844 postings from 15 companies across
-all 3 sources. Levels: 59 `intern`, 74 `newgrad`, 4,711 `unknown`. 1,982
-flagged remote. 0 with a deadline (no board publishes one). 74 tests pass.
+**Data as of the last ingest run:** 5,149 postings from 22 companies across all
+3 sources. 67 `intern`, 77 `newgrad`, 5,005 `unknown`. 0 chunks, because
+`chunk_posting` is not written. **204 tests pass.**
 
 ---
 
 ## Open with the author
 
-- **Company discovery** — replacing the hardcoded `companies.toml` with an
-  LLM-proposes / HTTP-verifies pipeline plus a `companies` table that caches
-  hits *and* misses so nothing is re-checked. Agreed in principle; timing
-  agreed as "after Phase 3". Design settled: model supplies company *names*
-  (reliable), code derives token slugs, HTTP verifies across all three boards
-  (because companies migrate ATS vendors — that broke 8 of 13 Lever guesses).
-  Not yet decided: whether the leftovers get an agentic retry loop.
+- **`discover --from crawl` is still unverified live.** Common Crawl has been
+  unreachable across two sessions. Everything else in discovery is verified.
 - **`.gitattributes`** — git warns `LF will be replaced by CRLF` on every
-  commit. A one-line `* text=auto` would silence it. Not added unprompted.
+  commit. A one-line `* text=auto` would silence it, but it rewrites every
+  file's line endings and would show up as "all files changed". Not added
+  unprompted.
+- **The project lives under OneDrive**, where every file is a cloud
+  placeholder. `.vscode/settings.json` stops VS Code watching the 12k ignored
+  dependency files, which was causing phantom "uncommitted changes". The
+  permanent fix is moving the project out of OneDrive.
+- **Whether discovery leftovers get an agentic retry loop** (design discussed,
+  not decided).
 
 ---
 
