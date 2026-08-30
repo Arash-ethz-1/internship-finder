@@ -1,5 +1,16 @@
-# Claude Code local settings
-.claude/settings.local.json
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data: sqlite, vectors, embedding cache, drafted letters
+data/
+
+# Personal project write-ups. The folder README and the example are committed
+# so a clone knows the expected format; nothing else in here ever is.
+profile/*
+!profile/README.md
+!profile/example-project.md
 
 # Python
 __pycache__/
@@ -8,10 +19,17 @@ __pycache__/
 venv/
 *.egg-info/
 .pytest_cache/
+.ruff_cache/
+dist/
+build/
 
-# Env / secrets
-.env
-.env.*
+# Node
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# Claude Code local settings
+.claude/settings.local.json
 
 # OS
 Thumbs.db

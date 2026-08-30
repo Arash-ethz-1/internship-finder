@@ -1,0 +1,15 @@
+# Companies to ingest, grouped by job board.
+#
+# Phase 2 seeds this with five real examples per source and documents how to
+# find a board token. Until then it is intentionally empty: an ingest run over
+# an empty list should print an empty summary, not crash.
+#
+# Shape each entry will take:
+#
+#   [[greenhouse]]
+#   token = "<board-token>"
+#   name  = "Display Name"
+
+greenhouse = []
+lever = []
+ashby = []

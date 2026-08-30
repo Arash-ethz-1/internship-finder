@@ -1,0 +1,151 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Design tokens. Every colour, size and radius in the app comes from here.
+   PLAN.md's design direction is the source of truth; do not introduce values
+   that are not declared in this file.
+
+   Two layers:
+     1. raw palette + semantic vars on :root, with a dark-mode override
+     2. an @theme block mapping the semantic vars into Tailwind utilities
+   The theme follows prefers-color-scheme, and [data-theme] on <html> wins
+   over it in both directions.
+--------------------------------------------------------------------------- */
+
+:root {
+  /* Raw palette, from PLAN.md */
+  --ink: #14161b; /* text, primary surface in dark mode */
+  --graphite: #232630; /* borders and dividers in dark mode */
+  --paper: #fbfbf9; /* page background in light mode */
+  --rule: #e6e5e1; /* hairlines in light mode */
+  --signal: #2f6f5e; /* the single accent: action required, active state */
+
+  /* Status ramp. Muted on purpose: a row's status should read from across the
+     room without reading the label, but must not compete with --signal. */
+  --status-interested: #6b7078;
+  --status-ready-to-submit: var(--signal);
+  --status-applied: #5a6b7c;
+  --status-interviewing: #b07d2b;
+  --status-offer: #4c8c3f;
+  --status-rejected: #6b7078;
+  --status-declined: #6b7078;
+  --status-faded-opacity: 0.45; /* rejected and declined */
+
+  /* Semantic, light mode */
+  --surface: var(--paper);
+  --surface-raised: #ffffff;
+  --surface-sunken: #f3f2ee;
+  --hairline: var(--rule);
+  --text: var(--ink);
+  --text-muted: #5f636b;
+  --text-faint: #8b8f97;
+  --focus: var(--signal);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface: var(--ink);
+    --surface-raised: #1a1d24;
+    --surface-sunken: #101216;
+    --hairline: var(--graphite);
+    --text: #e8e8e6;
+    --text-muted: #9aa0a8;
+    --text-faint: #6b7078;
+  }
+}
+
+:root[data-theme="dark"] {
+  --surface: var(--ink);
+  --surface-raised: #1a1d24;
+  --surface-sunken: #101216;
+  --hairline: var(--graphite);
+  --text: #e8e8e6;
+  --text-muted: #9aa0a8;
+  --text-faint: #6b7078;
+}
+
+:root[data-theme="light"] {
+  --surface: var(--paper);
+  --surface-raised: #ffffff;
+  --surface-sunken: #f3f2ee;
+  --hairline: var(--rule);
+  --text: var(--ink);
+  --text-muted: #5f636b;
+  --text-faint: #8b8f97;
+}
+
+@theme inline {
+  /* Type. The sans/mono split encodes prose vs data and is not decorative:
+     scores, IDs, dates, counts and company names in the grid are all mono. */
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", monospace;
+
+  /* Tight scale: 12/13/14/16/20. Hierarchy comes from weight, not size. */
+  --text-2xs: 0.75rem; /* 12 */
+  --text-2xs--line-height: 1rem;
+  --text-xs: 0.8125rem; /* 13 */
+  --text-xs--line-height: 1.125rem;
+  --text-sm: 0.875rem; /* 14 */
+  --text-sm--line-height: 1.25rem;
+  --text-base: 1rem; /* 16 */
+  --text-base--line-height: 1.5rem;
+  --text-lg: 1.25rem; /* 20 */
+  --text-lg--line-height: 1.75rem;
+
+  /* Colour */
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-hairline: var(--hairline);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-text-faint: var(--text-faint);
+  --color-signal: var(--signal);
+
+  --color-status-interested: var(--status-interested);
+  --color-status-ready-to-submit: var(--status-ready-to-submit);
+  --color-status-applied: var(--status-applied);
+  --color-status-interviewing: var(--status-interviewing);
+  --color-status-offer: var(--status-offer);
+  --color-status-rejected: var(--status-rejected);
+  --color-status-declined: var(--status-declined);
+
+  /* Nothing in this app is rounder than 4px. */
+  --radius-xs: 2px;
+  --radius-sm: 3px;
+  --radius-md: 4px;
+
+  /* The grid row. Fixed, because virtualisation depends on knowing it. */
+  --spacing-row: 36px;
+}
+
+@layer base {
+  html {
+    color-scheme: light dark;
+  }
+
+  body {
+    background-color: var(--surface);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Visible focus everywhere. Part of the quality floor, not optional. */
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
+  }
+
+  /* One orchestrated moment only, and never for people who opted out. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
