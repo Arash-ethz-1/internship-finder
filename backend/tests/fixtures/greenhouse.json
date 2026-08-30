@@ -1,0 +1,37 @@
+{
+  "jobs": [
+    {
+      "id": 4012345,
+      "title": "Software Engineering Intern, Payments (Summer 2027)",
+      "updated_at": "2026-07-14T09:12:00-04:00",
+      "first_published": "2026-07-01T08:00:00-04:00",
+      "location": { "name": "Remote - Europe" },
+      "absolute_url": "https://job-boards.greenhouse.io/acme/jobs/4012345",
+      "content": "&lt;p&gt;Join the Payments team for a 12-week &lt;strong&gt;internship&lt;/strong&gt;.&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Python &amp;amp; Go&lt;/li&gt;&lt;li&gt;Distributed systems&lt;/li&gt;&lt;/ul&gt;"
+    },
+    {
+      "id": 4012346,
+      "title": "Staff Internal Tools Engineer",
+      "updated_at": "2026-06-02T11:00:00Z",
+      "location": { "name": "Berlin, Germany" },
+      "absolute_url": "https://job-boards.greenhouse.io/acme/jobs/4012346",
+      "content": "&lt;p&gt;Own our internal platform. Ten years of experience required.&lt;/p&gt;"
+    },
+    {
+      "id": 4012347,
+      "title": "New Grad Software Engineer",
+      "updated_at": "2026-06-20T11:00:00Z",
+      "location": { "name": "Zurich, Switzerland" },
+      "absolute_url": "https://job-boards.greenhouse.io/acme/jobs/4012347",
+      "content": "&lt;p&gt;For candidates graduating in 2027.&lt;/p&gt;"
+    },
+    {
+      "id": null,
+      "title": "Broken record with no id",
+      "location": { "name": "Nowhere" },
+      "absolute_url": "https://job-boards.greenhouse.io/acme/jobs/0",
+      "content": "&lt;p&gt;Should be skipped.&lt;/p&gt;"
+    }
+  ],
+  "meta": { "total": 4 }
+}

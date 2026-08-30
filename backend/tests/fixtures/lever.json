@@ -1,0 +1,35 @@
+[
+  {
+    "id": "b1f2c3d4-0000-4444-8888-aaaabbbbcccc",
+    "text": "Working Student, Machine Learning",
+    "categories": {
+      "commitment": "Part-time",
+      "department": "Research",
+      "location": "Munich, Germany",
+      "team": "ML Platform"
+    },
+    "descriptionPlain": "Support the ML platform team while you study.",
+    "description": "<p>Support the ML platform team while you study.</p>",
+    "lists": [
+      {
+        "text": "What you'll do",
+        "content": "<li>Train models</li><li>Write evaluation harnesses</li>"
+      }
+    ],
+    "additionalPlain": "We hire on a rolling basis.",
+    "hostedUrl": "https://jobs.lever.co/acme/b1f2c3d4-0000-4444-8888-aaaabbbbcccc",
+    "applyUrl": "https://jobs.lever.co/acme/b1f2c3d4-0000-4444-8888-aaaabbbbcccc/apply",
+    "createdAt": 1782000000000,
+    "workplaceType": "onsite"
+  },
+  {
+    "id": "c2c2c2c2-1111-4444-8888-ddddeeeeffff",
+    "text": "Senior Backend Engineer",
+    "categories": { "location": "Remote - Worldwide" },
+    "descriptionPlain": "Own our billing services end to end.",
+    "lists": [],
+    "hostedUrl": "https://jobs.lever.co/acme/c2c2c2c2-1111-4444-8888-ddddeeeeffff",
+    "createdAt": 1780000000000,
+    "workplaceType": "remote"
+  }
+]

@@ -1,15 +1,82 @@
-# Companies to ingest, grouped by job board.
+# Companies to ingest, grouped by which job board they use.
 #
-# Phase 2 seeds this with five real examples per source and documents how to
-# find a board token. Until then it is intentionally empty: an ingest run over
-# an empty list should print an empty summary, not crash.
+# `token` is the company's board identifier, `name` is what shows in the UI.
+# Every token below was verified against the live API; a 404 is reported and
+# skipped rather than taking the run down, so a stale token is not urgent.
 #
-# Shape each entry will take:
+# --- How to find a company's token ------------------------------------------
 #
-#   [[greenhouse]]
-#   token = "<board-token>"
-#   name  = "Display Name"
+# Open the company's careers page and look at the URL of the job listings.
+#
+#   Greenhouse  job-boards.greenhouse.io/TOKEN  or  boards.greenhouse.io/TOKEN
+#               Some companies embed the board on their own domain; view source
+#               and search for "greenhouse.io/" to find the token.
+#               Check:  https://boards-api.greenhouse.io/v1/boards/TOKEN/jobs
+#
+#   Lever       jobs.lever.co/TOKEN
+#               Check:  https://api.lever.co/v0/postings/TOKEN?mode=json
+#
+#   Ashby       jobs.ashbyhq.com/TOKEN
+#               Check:  https://api.ashbyhq.com/posting-api/job-board/TOKEN
+#
+# If the URL returns JSON in the browser, the token is right.
 
-greenhouse = []
-lever = []
-ashby = []
+[[greenhouse]]
+token = "stripe"
+name = "Stripe"
+
+[[greenhouse]]
+token = "anthropic"
+name = "Anthropic"
+
+[[greenhouse]]
+token = "databricks"
+name = "Databricks"
+
+[[greenhouse]]
+token = "figma"
+name = "Figma"
+
+[[greenhouse]]
+token = "instacart"
+name = "Instacart"
+
+[[lever]]
+token = "palantir"
+name = "Palantir"
+
+[[lever]]
+token = "veeva"
+name = "Veeva Systems"
+
+[[lever]]
+token = "matchgroup"
+name = "Match Group"
+
+[[lever]]
+token = "spotify"
+name = "Spotify"
+
+[[lever]]
+token = "lever"
+name = "Lever"
+
+[[ashby]]
+token = "openai"
+name = "OpenAI"
+
+[[ashby]]
+token = "ramp"
+name = "Ramp"
+
+[[ashby]]
+token = "notion"
+name = "Notion"
+
+[[ashby]]
+token = "cohere"
+name = "Cohere"
+
+[[ashby]]
+token = "linear"
+name = "Linear"

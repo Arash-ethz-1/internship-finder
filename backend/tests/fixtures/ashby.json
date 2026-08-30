@@ -1,0 +1,41 @@
+{
+  "apiVersion": "1",
+  "jobs": [
+    {
+      "id": "9f8e7d6c-2222-4444-8888-111122223333",
+      "title": "Research Intern, Interpretability",
+      "location": "London, United Kingdom",
+      "secondaryLocations": [],
+      "department": "Research",
+      "team": "Interpretability",
+      "isListed": true,
+      "isRemote": false,
+      "descriptionPlain": "Work with the interpretability team for six months.",
+      "descriptionHtml": "<p>Work with the interpretability team for six months.</p>",
+      "publishedAt": "2026-08-01T10:00:00.000Z",
+      "employmentType": "Intern",
+      "jobUrl": "https://jobs.ashbyhq.com/acme/9f8e7d6c-2222-4444-8888-111122223333",
+      "applyUrl": "https://jobs.ashbyhq.com/acme/9f8e7d6c-2222-4444-8888-111122223333/application"
+    },
+    {
+      "id": "1a2b3c4d-3333-4444-8888-444455556666",
+      "title": "Product Designer",
+      "location": "Anywhere",
+      "isListed": true,
+      "isRemote": true,
+      "descriptionHtml": "<p>Design the console.</p><ul><li>Figma</li></ul>",
+      "publishedAt": "2026-05-11T08:30:00.000Z",
+      "jobUrl": "https://jobs.ashbyhq.com/acme/1a2b3c4d-3333-4444-8888-444455556666"
+    },
+    {
+      "id": "deadbeef-4444-4444-8888-777788889999",
+      "title": "Unlisted Role",
+      "location": "Secret",
+      "isListed": false,
+      "isRemote": false,
+      "descriptionPlain": "Should be skipped.",
+      "publishedAt": "2026-05-11T08:30:00.000Z",
+      "jobUrl": "https://jobs.ashbyhq.com/acme/deadbeef-4444-4444-8888-777788889999"
+    }
+  ]
+}

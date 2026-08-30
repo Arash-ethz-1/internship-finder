@@ -15,6 +15,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 # The full status set from PLAN.md's data model. `interested` is the entry
@@ -33,6 +34,59 @@ STATUSES: tuple[str, ...] = (
 SOURCES: tuple[str, ...] = ("greenhouse", "lever", "ashby")
 
 LEVELS: tuple[str, ...] = ("intern", "newgrad", "unknown")
+
+
+@dataclass(frozen=True)
+class Posting:
+    """One row of the ``postings`` table.
+
+    Lives here rather than in ``ingest/`` because both halves of the app use
+    it: ingestion builds one to write, and ``core/`` reads one back out.
+    ``first_seen`` and ``last_seen`` are unset until the row is written, which
+    is why they default to ``None``.
+    """
+
+    id: str
+    source: str
+    company: str
+    title: str
+    location: str | None
+    remote: bool
+    url: str
+    body: str
+    body_hash: str
+    posted_at: str | None = None
+    deadline: str | None = None
+    level: str = "unknown"
+    first_seen: str | None = None
+    last_seen: str | None = None
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> Posting:
+        """Rebuild a Posting from a ``SELECT * FROM postings`` row."""
+        return cls(
+            id=row["id"],
+            source=row["source"],
+            company=row["company"],
+            title=row["title"],
+            location=row["location"],
+            remote=bool(row["remote"]),
+            url=row["url"],
+            body=row["body"],
+            body_hash=row["body_hash"],
+            posted_at=row["posted_at"],
+            deadline=row["deadline"],
+            level=row["level"],
+            first_seen=row["first_seen"],
+            last_seen=row["last_seen"],
+        )
+
+
+def get_posting(conn: sqlite3.Connection, posting_id: str) -> Posting | None:
+    """Fetch one posting by id, or ``None`` if it is not there."""
+    row = conn.execute("SELECT * FROM postings WHERE id = ?", (posting_id,)).fetchone()
+    return Posting.from_row(row) if row is not None else None
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS postings (
