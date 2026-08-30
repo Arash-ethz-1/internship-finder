@@ -1,0 +1,47 @@
+{
+  // The project lives under OneDrive, where every file is a cloud placeholder.
+  // Watching 12k+ dependency files there makes VS Code's file watcher and git
+  // extension misbehave, which is what produces phantom "uncommitted changes".
+  // None of these paths is ever tracked by git.
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/.venv/**": true,
+    "**/data/**": true,
+    "**/__pycache__/**": true,
+    "**/.pytest_cache/**": true,
+    "**/.ruff_cache/**": true,
+    "**/dist/**": true,
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true
+  },
+
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.venv": true,
+    "**/dist": true,
+    "**/package-lock.json": true,
+    "**/uv.lock": true
+  },
+
+  // Hidden from the explorer so the tree shows the project, not its caches.
+  // node_modules and .venv stay visible, just unwatched and unsearched.
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/.ruff_cache": true,
+    "**/*.egg-info": true
+  },
+
+  // Without this, every `import fastapi` shows a false error because VS Code
+  // uses the global miniconda interpreter instead of the project's venv.
+  "python.defaultInterpreterPath": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestArgs": ["backend/tests"],
+
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true
+  },
+
+  "files.eol": "\n"
+}
