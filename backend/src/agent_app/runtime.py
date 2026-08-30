@@ -16,19 +16,32 @@ threadpool, and a single sqlite3 connection shared across threads is a bug
 waiting to happen; a thread-local one keeps the zero-argument accessor above
 while staying safe.
 
-Later phases add ``get_provider()`` (Phase 4) and ``get_vectors()`` (Phase 4)
-here alongside ``get_db()``.
+``get_vectors()`` caches the whole array in memory. At a few thousand chunks
+that is a handful of megabytes and makes brute-force cosine essentially free;
+anything that changes the array must call :func:`reset_vectors` so the next
+search sees it.
 """
 
 from __future__ import annotations
 
 import sqlite3
 import threading
+from typing import TYPE_CHECKING
 
 from .config import get_settings
 from .db import connect, init_db
 
+if TYPE_CHECKING:  # pragma: no cover - import cycle at runtime, fine for types
+    import numpy as np
+
+    from .core.embeddings import EmbeddingProvider
+
 _local = threading.local()
+
+# Process-wide, not per-thread: the provider is stateless and the vector matrix
+# is read-only once loaded, so sharing them across request threads is safe.
+_provider: EmbeddingProvider | None = None
+_vectors: np.ndarray | None = None
 
 
 def get_db() -> sqlite3.Connection:
@@ -49,3 +62,44 @@ def close_db() -> None:
     if conn is not None:
         conn.close()
         _local.conn = None
+
+
+def get_provider() -> EmbeddingProvider:
+    """Return the configured embedding provider, building it on first use.
+
+    Deferred so that importing this module never requires an API key: only the
+    code that actually embeds needs one.
+    """
+    global _provider
+    if _provider is None:
+        from .core.embeddings import build_provider
+
+        _provider = build_provider(get_settings())
+    return _provider
+
+
+def get_vectors() -> np.ndarray:
+    """Return the whole vector matrix, loading vectors.npy on first use.
+
+    Shape is ``(n_chunks_embedded, dim)``. A chunk's row is its ``vector_row``.
+    """
+    global _vectors
+    if _vectors is None:
+        from .core.embeddings import load_vectors
+
+        _vectors = load_vectors(get_settings())
+    return _vectors
+
+
+def reset_vectors() -> None:
+    """Drop the cached matrix. Anything that writes vectors.npy must call this."""
+    global _vectors
+    _vectors = None
+
+
+def reset() -> None:
+    """Drop every cached resource. Tests use this between databases."""
+    global _provider
+    close_db()
+    reset_vectors()
+    _provider = None

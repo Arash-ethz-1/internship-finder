@@ -14,6 +14,7 @@ from .discovery import (
     run_discovery,
     seed_from_toml,
 )
+from .profile import ProfileReport, ingest_profile, read_profile_docs
 from .runner import (
     BoardNotFound,
     CompanyEntry,
@@ -35,13 +36,16 @@ __all__ = [
     "FetchFailed",
     "IngestReport",
     "PoliteClient",
+    "ProfileReport",
     "company_counts",
     "format_summary",
     "from_crawl",
     "from_file",
     "from_llm",
     "load_companies",
+    "ingest_profile",
     "load_verified",
+    "read_profile_docs",
     "run_discovery",
     "run_ingest",
     "seed_from_toml",

@@ -4,7 +4,7 @@ Running state of the project. `plan.md` is the spec (what we intend to build);
 this file is the log (what is actually built, what is next, and what we decided
 along the way that the spec does not say).
 
-**Last updated:** 2026-08-30, end of Phase 9.
+**Last updated:** 2026-08-30, end of Phase 4 and 5.
 
 ---
 
@@ -33,10 +33,18 @@ uv run python -m agent_app.cli discover --from crawl --source ashby --limit 40
 `chunk_posting`. It is the first Category B function and everything downstream
 waits on it. The docstring lists what must hold.
 
-**Claude:** every phase that does not need Category B is done. Phase 4
-(embeddings plumbing) is next and is writable without chunking — it embeds
-whatever chunks exist, so it can be built and tested against synthetic chunks
-and only becomes useful once `chunk_posting` fills the table.
+**Claude:** nothing left. Every phase that can be built without a Category B
+body is built. The remaining work is the nine reserved functions.
+
+The moment `chunk_posting` exists, this runs end to end:
+
+```
+cd backend
+uv run python -m agent_app.cli embed     # chunks -> vectors.npy
+uv run python -m agent_app.cli status    # confirms the counts line up
+```
+
+and once `search` follows, `/letters/:id` and the retrieval trace light up.
 
 `python dev.py` then <http://localhost:5173>. Note Vite binds to `localhost`,
 not `127.0.0.1` — checking the wrong one looks like the server is down.
@@ -59,8 +67,8 @@ email, previously a v2 non-goal).
 | 2 | Ingestion | Claude | ✅ done | `403a5c8` |
 | 3 | Core stubs (Category B signatures) | Claude | ✅ done | `49a8989` |
 | 3.5 | `chunk_posting`, `chunk_profile_doc` | **Arash** | ⬜ **your turn — start here** | |
-| 4 | Embeddings plumbing | Claude | ⬜ blocked on 3.5 | |
-| 5 | Profile corpus | Claude | ⬜ blocked on 3.5 | |
+| 4 | Embeddings plumbing | Claude | ✅ done (end-to-end check needs chunks) | |
+| 5 | Profile corpus | Claude | ✅ format + ingestion path; needs chunk_profile_doc to run | |
 | 6 | Letter drafting | Claude | ✅ done | |
 | 7 | API | Claude | ✅ done | |
 | 8 | Frontend | Claude | ✅ done | |
@@ -73,6 +81,12 @@ Category B functions the author writes by hand, none of them started:
 `chunk_posting`, `chunk_profile_doc`, `search`, `dense_scores`, `bm25_scores`,
 `fuse`, `run_agent`, the four `TOOL_SCHEMAS` descriptions, `recall_at_k`,
 `run_eval`.
+
+**Everything else is done.** Each one has a caller waiting for it, a test
+asserting it still raises, and an error message naming it when something tries
+to run. Suggested order: `chunk_posting` (unblocks embedding), then
+`dense_scores` / `bm25_scores` / `fuse` / `search` (unblocks letters, eval and
+the trace), then `run_agent` (unblocks `/chat`).
 
 ---
 

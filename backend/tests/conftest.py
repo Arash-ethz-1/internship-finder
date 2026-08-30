@@ -24,9 +24,9 @@ def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
     reset_settings()
-    runtime.close_db()
+    runtime.reset()
     yield
-    runtime.close_db()
+    runtime.reset()
     reset_settings()
 
 

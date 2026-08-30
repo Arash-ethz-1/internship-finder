@@ -38,7 +38,7 @@ from .ingest import (
     run_ingest,
     seed_from_toml,
 )
-from .runtime import close_db, get_db
+from .runtime import close_db, get_db, reset_vectors
 
 
 def cmd_init_db(_args: argparse.Namespace) -> int:
@@ -174,6 +174,76 @@ def cmd_draft_letter(args: argparse.Namespace) -> int:
     print("\ngrounded in:")
     for hit in letter.grounding:
         print(f"  {hit.score:.4f}  {hit.profile_doc}#{hit.ordinal}")
+    return 0
+
+
+def cmd_ingest_profile(_args: argparse.Namespace) -> int:
+    """Chunk and embed the author's project write-ups."""
+    from .core.embeddings import EmbeddingError, embed_all_pending
+    from .ingest.profile import ingest_profile
+
+    settings = get_settings()
+    settings.ensure_dirs()
+    conn = get_db()
+
+    try:
+        report = ingest_profile(conn, settings)
+    except NotImplementedError:
+        print(
+            "error: ingesting write-ups needs chunk_profile_doc, which is Category B "
+            "and not written yet.",
+            file=sys.stderr,
+        )
+        return 3
+
+    print(report.format())
+    if report.documents == 0:
+        print("")
+        print(f"Add one markdown file per project to {settings.profile_dir}")
+        print("See profile/README.md for the format.")
+        return 0
+
+    try:
+        embedded = embed_all_pending(conn, settings=settings)
+    except (ConfigError, EmbeddingError) as exc:
+        print("", file=sys.stderr)
+        print(f"chunked, but not embedded: {exc}", file=sys.stderr)
+        return 2
+
+    reset_vectors()
+    print(embedded.format())
+    return 0
+
+
+def cmd_embed(args: argparse.Namespace) -> int:
+    """Embed every chunk that does not have a vector yet."""
+    from .core.embeddings import EmbeddingError, embed_all_pending, rebuild_vectors
+
+    settings = get_settings()
+    conn = get_db()
+
+    try:
+        if args.compact:
+            before, after = rebuild_vectors(conn, settings)
+            print(f"compacted vectors.npy: {before:,} -> {after:,} row(s)")
+            reset_vectors()
+
+        report = embed_all_pending(conn, settings=settings)
+    except ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except EmbeddingError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    reset_vectors()
+    print(report.format())
+
+    chunks = conn.execute("SELECT count(*) FROM chunks").fetchone()[0]
+    if chunks == 0:
+        print("")
+        print("The chunks table is empty, so there was nothing to embed.")
+        print("chunk_posting is Category B and has not been written yet.")
     return 0
 
 
@@ -407,6 +477,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_letter.set_defaults(func=cmd_draft_letter)
 
+    p_profile = sub.add_parser(
+        "ingest-profile",
+        help="chunk and embed your project write-ups in profile/",
+        description=(
+            "Read every markdown file in profile/, chunk it, and embed the "
+            "chunks. These write-ups are the only facts the letter drafter "
+            "knows about you. README.md and example-project.md are skipped."
+        ),
+    )
+    p_profile.set_defaults(func=cmd_ingest_profile)
+
+    p_embed = sub.add_parser(
+        "embed",
+        help="embed any chunks that do not have a vector yet",
+        description=(
+            "Find chunks with no vector_row, embed them in batches, append to "
+            "data/vectors.npy and write the row indices back. Safe to re-run: "
+            "already-embedded chunks are skipped and repeated text is served "
+            "from the on-disk cache."
+        ),
+    )
+    p_embed.add_argument(
+        "--compact",
+        action="store_true",
+        help="first rebuild vectors.npy, dropping rows no chunk references any more",
+    )
+    p_embed.set_defaults(func=cmd_embed)
+
     p_status = sub.add_parser(
         "status",
         help="show the pipeline: counts by status, level, source and company",
@@ -434,10 +532,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_chat.add_argument("--max-iters", type=int, default=12, help="tool-use rounds (default 12)")
     p_chat.set_defaults(func=cmd_chat)
 
-    parser.epilog = (
-        "Not yet available: `embed` arrives with phase 4 and `ingest-profile` with "
-        "phase 5. Both wait on the Category B chunking functions."
-    )
     return parser
 
 
