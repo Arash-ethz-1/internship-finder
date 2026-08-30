@@ -33,8 +33,15 @@ uv run python -m agent_app.cli discover --from crawl --source ashby --limit 40
 `chunk_posting`. It is the first Category B function and everything downstream
 waits on it. The docstring lists what must hold.
 
-**Claude:** Phase 8, the frontend. The API it consumes is complete and
-serving real data. Phases 4 and 5 cannot start until `chunk_posting` exists.
+**Claude:** Phase 9 (CLI and CI) is the only phase left that is not blocked.
+Phases 4 and 5 cannot start until `chunk_posting` exists.
+
+`python dev.py` then <http://localhost:5173>. Note Vite binds to `localhost`,
+not `127.0.0.1` — checking the wrong one looks like the server is down.
+
+The `/chat` route renders its error state rather than a live agent, and
+`/letters/:id` reports 501, until `run_agent` and `retrieval.search` exist.
+That is correct behaviour, not breakage.
 
 Two phases were added to `plan.md` on 2026-08-30 at the author's request:
 **Phase 2.5** (company discovery) and **Phase 10** (application tracking from
@@ -54,7 +61,7 @@ email, previously a v2 non-goal).
 | 5 | Profile corpus | Claude | ⬜ blocked on 3.5 | |
 | 6 | Letter drafting | Claude | ✅ done | |
 | 7 | API | Claude | ✅ done | |
-| 8 | Frontend | Claude | ⬜ **next for Claude** | |
+| 8 | Frontend | Claude | ✅ done | |
 | 9 | CLI and CI | Claude | ⬜ | |
 | 10 | Application tracking from email | Claude | ⬜ new, added 2026-08-30 | |
 | 2.5 | Company discovery | Claude | ✅ done (crawl path unverified live) | |

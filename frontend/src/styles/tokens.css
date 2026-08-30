@@ -117,6 +117,20 @@
 
   /* The grid row. Fixed, because virtualisation depends on knowing it. */
   --spacing-row: 36px;
+
+  /* The only animation in the app: a trace row arriving. */
+  --animate-trace-in: trace-in 220ms ease-out;
+
+  @keyframes trace-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
 }
 
 @layer base {

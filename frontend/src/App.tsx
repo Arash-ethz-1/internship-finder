@@ -1,59 +1,98 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { BrowserRouter, NavLink, Navigate, Route, Routes } from "react-router";
 
-import { getHealth } from "./api/client";
+import { Chat } from "./routes/Chat";
+import { Letters } from "./routes/Letters";
+import { Postings } from "./routes/Postings";
+import { Stats } from "./routes/Stats";
 
-type ApiState = { kind: "checking" } | { kind: "up"; version: string } | { kind: "down" };
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
 
-/**
- * Phase 1 placeholder. Its only job is to prove the toolchain works end to
- * end: tokens applied, fonts loaded, and the Vite proxy reaching the API.
- * Phase 8 replaces this with the four real routes.
- */
-export function App() {
-  const [api, setApi] = useState<ApiState>({ kind: "checking" });
+type Theme = "light" | "dark" | "system";
+
+function useTheme(): [Theme, (theme: Theme) => void] {
+  const [theme, setTheme] = useState<Theme>(
+    () => (localStorage.getItem("theme") as Theme | null) ?? "system",
+  );
 
   useEffect(() => {
-    let cancelled = false;
-    getHealth()
-      .then((health) => {
-        if (!cancelled) setApi({ kind: "up", version: health.version });
-      })
-      .catch(() => {
-        if (!cancelled) setApi({ kind: "down" });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    const root = document.documentElement;
+    if (theme === "system") root.removeAttribute("data-theme");
+    else root.setAttribute("data-theme", theme);
+    localStorage.setItem("theme", theme);
+  }, [theme]);
+
+  return [theme, setTheme];
+}
+
+function Nav() {
+  const [theme, setTheme] = useTheme();
+  const link = ({ isActive }: { isActive: boolean }) =>
+    `px-2 py-1 font-mono text-2xs rounded-xs ${
+      isActive ? "text-signal" : "text-text-muted hover:text-text"
+    }`;
 
   return (
-    <main className="min-h-screen px-8 py-10">
-      <h1 className="text-lg font-medium tracking-tight">Internship screener</h1>
-      <p className="mt-1 text-xs text-text-muted">Scaffold. Phase 8 builds the real interface.</p>
+    <nav className="flex shrink-0 items-center gap-1 border-b border-hairline px-3 py-1.5">
+      <span className="mr-3 font-mono text-2xs text-text-faint">screener</span>
+      <NavLink to="/postings" className={link}>
+        postings
+      </NavLink>
+      <NavLink to="/chat" className={link}>
+        chat
+      </NavLink>
+      <NavLink to="/stats" className={link}>
+        stats
+      </NavLink>
+      <button
+        type="button"
+        onClick={() => setTheme(theme === "dark" ? "light" : theme === "light" ? "system" : "dark")}
+        className="ml-auto px-2 py-1 font-mono text-2xs text-text-faint hover:text-text"
+        title="Cycle theme: system, dark, light"
+      >
+        {theme}
+      </button>
+    </nav>
+  );
+}
 
-      <dl className="mt-8 max-w-xl border-t border-hairline text-xs">
-        <div className="flex items-center justify-between border-b border-hairline py-2">
-          <dt className="text-text-muted">Backend API</dt>
-          <dd className="font-mono">
-            {api.kind === "checking" && <span className="text-text-faint">checking…</span>}
-            {api.kind === "up" && <span className="text-signal">up · v{api.version}</span>}
-            {api.kind === "down" && (
-              <span className="text-text-muted">
-                not reachable — run <span className="text-text">python dev.py</span>
-              </span>
-            )}
-          </dd>
-        </div>
-        {(["/postings", "/chat", "/letters/:id", "/stats"] as const).map((route) => (
-          <div
-            key={route}
-            className="flex items-center justify-between border-b border-hairline py-2"
-          >
-            <dt className="font-mono text-text-muted">{route}</dt>
-            <dd className="text-text-faint">phase 8</dd>
+export function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <div className="flex h-screen flex-col">
+          <Nav />
+          <div className="min-h-0 flex-1">
+            <Routes>
+              <Route path="/" element={<Navigate to="/postings" replace />} />
+              <Route path="/postings" element={<Postings />} />
+              <Route path="/chat" element={<Chat />} />
+              <Route path="/letters/:id" element={<Letters />} />
+              <Route path="/stats" element={<Stats />} />
+              <Route
+                path="*"
+                element={
+                  <div className="p-8 text-xs text-text-muted">
+                    No such page.{" "}
+                    <NavLink to="/postings" className="text-signal underline-offset-2 hover:underline">
+                      Back to postings
+                    </NavLink>
+                  </div>
+                }
+              />
+            </Routes>
           </div>
-        ))}
-      </dl>
-    </main>
+        </div>
+      </BrowserRouter>
+    </QueryClientProvider>
   );
 }
