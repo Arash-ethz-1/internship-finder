@@ -18,6 +18,11 @@ NOT_IMPLEMENTED = "Category B — author writes this by hand"
 
 DEFAULT_K_VALUES = (1, 5, 10, 20)
 
+# How many chunks to retrieve per unit of k. Hits are chunks and recall is
+# measured over postings, so asking for exactly k chunks would measure a
+# shorter list than it looks.
+CHUNK_OVERSAMPLE = 5
+
 
 @dataclass(frozen=True)
 class EvalQuery:
@@ -96,14 +101,20 @@ def recall_at_k(retrieved: list[str], relevant: list[str], k: int) -> float:
     ``retrieved`` is posting ids in rank order, best first. ``relevant`` is the
     labelled set for that query.
 
-    Watch for: an empty ``relevant`` list (dividing by zero), duplicate posting
-    ids in ``retrieved`` because several chunks of the same posting matched —
-    decide whether that counts once or twice, and be consistent — and ``k``
-    larger than ``len(retrieved)``.
+    A repeated id counts once and takes one slot: duplicates are collapsed
+    before the top ``k`` is taken, so a posting that matched on five chunks
+    cannot fill the whole window. An empty ``relevant`` list scores 0.0 —
+    there was nothing to find, and 1.0 would quietly reward a query nobody
+    labelled.
 
-    Category B — author implements.
+    Category B, written by Claude at the author's request on 2026-08-31.
     """
-    raise NotImplementedError(NOT_IMPLEMENTED)
+    wanted = set(relevant)
+    if not wanted or k <= 0:
+        return 0.0
+    seen = dict.fromkeys(retrieved)  # de-duplicated, order preserved
+    found = wanted.intersection(list(seen)[:k])
+    return len(found) / len(wanted)
 
 
 def run_eval(queries: list[EvalQuery], k_values: tuple[int, ...] = DEFAULT_K_VALUES) -> EvalResult:
@@ -113,10 +124,29 @@ def run_eval(queries: list[EvalQuery], k_values: tuple[int, ...] = DEFAULT_K_VAL
     posting ids from the hits in rank order, and scores them with
     :func:`recall_at_k`.
 
-    Search returns *chunk* hits while the labels are *posting* ids, so
-    collapsing chunks to their parent posting — keeping best rank per posting —
-    is part of the job here.
+    Search returns *chunk* hits while the labels are *posting* ids, so chunks
+    are collapsed to their parent posting, keeping the best rank of each.
+    Because of that collapse the search asks for more chunks than the largest
+    ``k``: at the median of six chunks per posting, a top-10 chunk list can
+    easily be two postings.
 
-    Category B — author implements.
+    Category B, written by Claude at the author's request on 2026-08-31.
     """
-    raise NotImplementedError(NOT_IMPLEMENTED)
+    from . import retrieval  # deferred: importing this module must stay cheap
+
+    k_values = tuple(sorted(k_values))
+    per_query: dict[str, dict[int, float]] = {}
+    depth = max(k_values, default=0) * CHUNK_OVERSAMPLE
+
+    for query in queries:
+        hits = retrieval.search(query.query, retrieval.SearchFilters(), depth)
+        postings = list(dict.fromkeys(h.posting_id for h in hits if h.posting_id))
+        per_query[query.query] = {
+            k: recall_at_k(postings, list(query.relevant_posting_ids), k) for k in k_values
+        }
+
+    recall = {
+        k: (sum(scores[k] for scores in per_query.values()) / len(per_query) if per_query else 0.0)
+        for k in k_values
+    }
+    return EvalResult(n_queries=len(queries), recall=recall, per_query=per_query)

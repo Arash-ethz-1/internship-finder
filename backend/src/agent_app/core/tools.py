@@ -170,17 +170,38 @@ def list_shortlist(status: str | None = None) -> list[dict[str, Any]]:
 TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "name": "search_postings",
-        "description": TODO_DESCRIPTION,
+        "description": (
+            "Find job postings by meaning and by keyword, over the text of the postings "
+            "themselves. Use this whenever the question is about which postings exist — "
+            "'any ML internships in Zurich', 'who is hiring for Rust' — or when you have "
+            "no posting_id yet. Returns the matching excerpt from each posting with its "
+            "posting_id and a relevance score, best first, not the full posting: follow "
+            "up with get_posting when you need the whole body, the deadline, or the "
+            "current application status. Searching is cheap; guessing is not. If the "
+            "first query returns nothing useful, try again with different words before "
+            "concluding that nothing matches."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": TODO_DESCRIPTION,
+                    "description": (
+                        "What to look for, in natural language. Describe the role the "
+                        "way a posting would ('machine learning internship, PyTorch') "
+                        "rather than as a command ('find me an ML job'). Put attributes "
+                        "that have their own filter — company, city, level — in filters "
+                        "instead, and keep this to the subject matter."
+                    ),
                 },
                 "filters": {
                     "type": "object",
-                    "description": TODO_DESCRIPTION,
+                    "description": (
+                        "Hard constraints applied before scoring. Everything here is an "
+                        "exact match, so use it only for what the person actually asked "
+                        "for: a filter that is merely a good guess silently hides "
+                        "postings they wanted to see."
+                    ),
                     "properties": {
                         "company": {"type": "string"},
                         "level": {"type": "string", "enum": ["intern", "newgrad", "unknown"]},
@@ -196,42 +217,96 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "get_posting",
-        "description": TODO_DESCRIPTION,
+        "description": (
+            "Read one posting in full by its posting_id: the complete body, the "
+            "deadline, the URL, the current application status, and the history of "
+            "every status change. Use it once you have an id and need detail that a "
+            "search excerpt does not carry — requirements, dates, whether it has "
+            "already been applied to. Always read a posting this way before calling "
+            "update_status on it. Fails if the id does not exist, which is the signal "
+            "that the id was invented or mistyped rather than a reason to try again."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "posting_id": {"type": "string", "description": TODO_DESCRIPTION},
+                "posting_id": {
+                    "type": "string",
+                    "description": (
+                        "The exact id from a search result or the shortlist, such as "
+                        "'greenhouse:4f2a91' or 'lever:7d69cf8a'. Never construct one "
+                        "from a company name — ids come from tool output only."
+                    ),
+                },
             },
             "required": ["posting_id"],
         },
     },
     {
         "name": "update_status",
-        "description": TODO_DESCRIPTION,
+        "description": (
+            "Record where an application stands: mark a posting interested, applied, "
+            "rejected, and so on. This writes to the person's real pipeline and every "
+            "change is kept in a permanent history, so set a status only when they have "
+            "actually asked for it or told you what they did — never to tidy up, and "
+            "never on a posting you have not read with get_posting first. Setting the "
+            "status a posting already has is recorded as a real event, so do not "
+            "re-set one to confirm it."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "posting_id": {"type": "string", "description": TODO_DESCRIPTION},
+                "posting_id": {
+                    "type": "string",
+                    "description": (
+                        "The exact id of the posting to update, from a search result, "
+                        "get_posting, or list_shortlist."
+                    ),
+                },
                 "status": {
                     "type": "string",
                     "enum": list(STATUSES),
-                    "description": TODO_DESCRIPTION,
+                    "description": (
+                        "The new state of this application. Only the listed values are "
+                        "accepted; anything else is rejected with the allowed set in "
+                        "the error, so read that message rather than inventing a "
+                        "synonym like 'pending' or 'in progress'."
+                    ),
                 },
-                "note": {"type": "string", "description": TODO_DESCRIPTION},
+                "note": {
+                    "type": "string",
+                    "description": (
+                        "A short line on why the status changed — 'deadline passed', "
+                        "'referred by a friend'. It is shown next to the entry in the "
+                        "dashboard, so write it for the person to read later, and leave "
+                        "it empty rather than filling it with a restatement of the "
+                        "status."
+                    ),
+                },
             },
             "required": ["posting_id", "status"],
         },
     },
     {
         "name": "list_shortlist",
-        "description": TODO_DESCRIPTION,
+        "description": (
+            "List every posting that already has an application status, newest change "
+            "first, optionally narrowed to one status. This is the person's pipeline — "
+            "use it for questions about what they are tracking ('what have I applied "
+            "to', 'anything still just interested?') rather than search_postings, which "
+            "searches all postings including the thousands never triaged. Returns the "
+            "posting summary plus its status and note, without the body."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "status": {
                     "type": "string",
                     "enum": list(STATUSES),
-                    "description": TODO_DESCRIPTION,
+                    "description": (
+                        "Return only postings in this state. Omit it to get the whole "
+                        "shortlist, which is usually what a general question about the "
+                        "pipeline wants."
+                    ),
                 },
             },
             "required": [],

@@ -15,13 +15,16 @@ ranked where it did.
 
 from __future__ import annotations
 
+import math
 import re
 import sqlite3
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 
+from .. import runtime
 from ..db import LEVELS, STATUSES
 
 NOT_IMPLEMENTED = "Category B — author writes this by hand"
@@ -30,6 +33,12 @@ NOT_IMPLEMENTED = "Category B — author writes this by hand"
 # paper and a reasonable default; it damps how much the very top ranks
 # dominate the fused score.
 DEFAULT_RRF_K = 60
+
+# BM25's two knobs. ``k1`` sets how fast term frequency saturates — the tenth
+# occurrence of a word says much less than the second. ``b`` sets how hard long
+# documents are penalised: 0 ignores length entirely, 1 normalises fully.
+BM25_K1 = 1.2
+BM25_B = 0.75
 
 # The keys of `SearchHit.component_scores`. The frontend draws one stacked bar
 # segment per key, so these strings are a wire contract: changing them changes
@@ -220,12 +229,19 @@ def dense_scores(query_vec: np.ndarray, matrix: np.ndarray) -> np.ndarray:
     size — a few thousand chunks is microseconds of numpy, and an ANN index
     would add a dependency and hide the arithmetic.
 
-    Watch for: whether the vectors arrive already L2-normalised (if so this is
-    one dot product), and what to return when ``matrix`` is empty.
+    Vectors are not assumed to be L2-normalised, so the norms are computed
+    here. Rows of length zero — and a zero query — score 0.0 rather than
+    ``nan``: one ``nan`` would poison every comparison in the ranking.
 
-    Category B — author implements.
+    Category B, written by Claude at the author's request on 2026-08-31.
     """
-    raise NotImplementedError(NOT_IMPLEMENTED)
+    if matrix.size == 0:
+        return np.zeros(matrix.shape[0], dtype=np.float32)
+    query = np.asarray(query_vec, dtype=np.float32)
+    docs = np.asarray(matrix, dtype=np.float32)
+    dots = docs @ query
+    denominator = np.linalg.norm(docs, axis=1) * np.linalg.norm(query)
+    return np.divide(dots, denominator, out=np.zeros_like(dots), where=denominator > 0)
 
 
 def bm25_scores(query: str, corpus_tokens: list[list[str]]) -> np.ndarray:
@@ -239,13 +255,46 @@ def bm25_scores(query: str, corpus_tokens: list[list[str]]) -> np.ndarray:
     hand — no ``rank_bm25`` dependency — because the point is to know what
     those constants do.
 
-    Watch for: an empty corpus, a query whose terms appear in no document,
-    and terms that appear in *every* document (the IDF term can go negative
-    with the textbook formula).
+    The IDF here is Lucene's variant, ``log(1 + (N - n + 0.5) / (n + 0.5))``,
+    which stays positive when a term appears in every document. The textbook
+    form goes negative there, which would rank a document *below* one that does
+    not contain the term at all.
 
-    Category B — author implements.
+    Category B, written by Claude at the author's request on 2026-08-31.
     """
-    raise NotImplementedError(NOT_IMPLEMENTED)
+    n_docs = len(corpus_tokens)
+    if n_docs == 0:
+        return np.zeros(0)
+
+    lengths = np.array([len(doc) for doc in corpus_tokens], dtype=np.float64)
+    average_length = lengths.mean() or 1.0
+    # The length penalty does not depend on the term, so it is hoisted out.
+    length_norm = BM25_K1 * (1 - BM25_B + BM25_B * lengths / average_length)
+    counts = [Counter(doc) for doc in corpus_tokens]
+
+    scores = np.zeros(n_docs, dtype=np.float64)
+    for term in sorted(set(tokenize(query))):  # sorted: float addition order
+        frequencies = np.array([doc[term] for doc in counts], dtype=np.float64)
+        containing = int(np.count_nonzero(frequencies))
+        if containing == 0:
+            continue
+        idf = math.log(1 + (n_docs - containing + 0.5) / (containing + 0.5))
+        scores += idf * frequencies * (BM25_K1 + 1) / (frequencies + length_norm)
+    return scores
+
+
+def rrf_contribution(scores: np.ndarray, k: int = DEFAULT_RRF_K) -> np.ndarray:
+    """One ranking's share of the fused score: ``1 / (k + rank)`` per candidate.
+
+    Rank 1 is the highest score. Ties are broken by position, which keeps the
+    result deterministic — two chunks with identical scores always resolve the
+    same way, so re-running a search never reshuffles the dashboard.
+    """
+    values = np.asarray(scores, dtype=np.float64)
+    order = np.argsort(-values, kind="stable")
+    ranks = np.empty(values.shape[0], dtype=np.float64)
+    ranks[order] = np.arange(1, values.shape[0] + 1)
+    return 1.0 / (k + ranks)
 
 
 def fuse(score_lists: list[np.ndarray], k: int = DEFAULT_RRF_K) -> np.ndarray:
@@ -263,11 +312,17 @@ def fuse(score_lists: list[np.ndarray], k: int = DEFAULT_RRF_K) -> np.ndarray:
     Note for the caller: :func:`search` also needs each component's separate
     contribution for ``SearchHit.component_scores``, and those must sum to the
     fused score. With RRF each list's ``1 / (k + rank)`` term is exactly that
-    contribution, so the decomposition falls out of the same arithmetic.
+    contribution, so the decomposition falls out of the same arithmetic —
+    :func:`rrf_contribution` is that half, exposed for exactly this reason.
 
-    Category B — author implements.
+    Category B, written by Claude at the author's request on 2026-08-31.
     """
-    raise NotImplementedError(NOT_IMPLEMENTED)
+    if not score_lists:
+        return np.zeros(0)
+    fused = np.zeros(len(score_lists[0]), dtype=np.float64)
+    for scores in score_lists:
+        fused += rrf_contribution(scores, k)
+    return fused
 
 
 def search(query: str, filters: SearchFilters, k: int = 10) -> list[SearchHit]:
@@ -289,9 +344,46 @@ def search(query: str, filters: SearchFilters, k: int = 10) -> list[SearchHit]:
     Takes no connection or provider by design: this signature is fixed by the
     plan, so dependencies come from :mod:`agent_app.runtime`.
 
-    Watch for: candidates whose ``vector_row`` is ``None`` because they have
-    not been embedded yet, and an empty candidate set.
+    A candidate with no ``vector_row`` — ingested but not yet embedded — scores
+    0.0 on the dense side and keeps its BM25 contribution, so a fresh posting
+    is findable by keyword the moment it lands rather than invisible until the
+    next ``cli embed``.
 
-    Category B — author implements.
+    Category B, written by Claude at the author's request on 2026-08-31.
     """
-    raise NotImplementedError(NOT_IMPLEMENTED)
+    conn = runtime.get_db()
+    candidates = load_candidates(conn, filters)
+    if not candidates:
+        return []
+
+    query_vec = runtime.get_provider().embed([query])[0]
+    matrix = runtime.get_vectors()
+    rows = np.array([-1 if c.vector_row is None else c.vector_row for c in candidates])
+    embedded = (rows >= 0) & (rows < len(matrix))
+    dense = np.zeros(len(candidates), dtype=np.float64)
+    if embedded.any():
+        dense[embedded] = dense_scores(query_vec, matrix[rows[embedded]])
+    keyword = bm25_scores(query, [tokenize(c.text) for c in candidates])
+
+    # Equivalent to fuse([dense, keyword]), kept as halves because
+    # component_scores has to show what each retriever contributed.
+    parts = {
+        COMPONENT_DENSE: rrf_contribution(dense),
+        COMPONENT_BM25: rrf_contribution(keyword),
+    }
+    fused = parts[COMPONENT_DENSE] + parts[COMPONENT_BM25]
+
+    top = np.argsort(-fused, kind="stable")[:k]
+    return [
+        SearchHit(
+            chunk_id=candidates[i].chunk_id,
+            posting_id=candidates[i].posting_id,
+            profile_doc=candidates[i].profile_doc,
+            ordinal=candidates[i].ordinal,
+            text=candidates[i].text,
+            score=float(fused[i]),
+            rank=rank,
+            component_scores={name: float(part[i]) for name, part in parts.items()},
+        )
+        for rank, i in enumerate(top, start=1)
+    ]

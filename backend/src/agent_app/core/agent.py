@@ -19,13 +19,38 @@ plan.md". The blocking behaviour is still available through
 
 from __future__ import annotations
 
+import json
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..config import get_settings
+from .tools import TOOL_FUNCTIONS, TOOL_SCHEMAS
+
 NOT_IMPLEMENTED = "Category B — author writes this by hand"
 
 DEFAULT_MAX_ITERS = 12
+
+# Enough for a long answer about several postings; the loop, not the reply,
+# is where the tokens actually go.
+DEFAULT_MAX_TOKENS = 4096
+
+SYSTEM_PROMPT = """You help one person track internship and new-grad \
+applications. You are talking to them about their own database of postings.
+
+Working rules:
+
+- Search before you answer. You do not know what is in the database until you
+  call a tool, and a plausible-sounding posting you invented is worse than
+  saying you found nothing.
+- Always name postings by their posting_id (like `greenhouse:abc123`), so the
+  answer can be checked against the dashboard.
+- Read a posting with get_posting before changing its status. Statuses are a
+  record of what the person actually did.
+- If a tool returns an error, say what failed and what you tried. Do not retry
+  the same call unchanged.
+- Be brief. This is a working tool, not a chat companion."""
 
 
 @dataclass(frozen=True)
@@ -173,11 +198,105 @@ def run_agent(
     :mod:`agent_app.config` (``settings.require_anthropic_key()``,
     ``settings.agent_model``), since this signature takes no client.
 
-    One thing to know: as written this raises on *call*. Once you add a
-    ``yield``, Python turns it into a generator function and calling it will
-    return an iterator that only raises on the first ``next()``. Both the 501
-    handling in the API and the test suite account for that.
-
-    Category B — author implements.
+    Category B, written by Claude at the author's request on 2026-08-31.
     """
-    raise NotImplementedError(NOT_IMPLEMENTED)
+    import anthropic  # deferred: importing this module must not need the SDK
+
+    settings = get_settings()
+    client = anthropic.Anthropic(api_key=settings.require_anthropic_key())
+
+    messages: list[dict[str, Any]] = [*history, {"role": "user", "content": user_message}]
+    trace: list[ToolCall] = []
+    spoken: list[str] = []
+    iters = 0
+
+    while iters < max_iters:
+        iters += 1
+        reply = client.messages.create(
+            model=settings.agent_model,
+            max_tokens=DEFAULT_MAX_TOKENS,
+            system=SYSTEM_PROMPT,
+            tools=TOOL_SCHEMAS,
+            messages=messages,
+        )
+        blocks = list(reply.content)
+        messages.append(
+            {"role": "assistant", "content": [_serialise(b) for b in blocks if _serialise(b)]}
+        )
+
+        said = "".join(b.text for b in blocks if b.type == "text").strip()
+        if said:
+            spoken.append(said)
+            yield TextEvent(delta=said)
+
+        requested = [b for b in blocks if b.type == "tool_use"]
+        if not requested:
+            break
+
+        results: list[dict[str, Any]] = []
+        for call in requested:
+            arguments = dict(call.input or {})
+            # Announced before it runs so the trace panel can show it pending.
+            yield ToolCallEvent(name=call.name, input=arguments)
+
+            started = time.perf_counter()
+            output, failed = _run_tool(call.name, arguments)
+            ms = int((time.perf_counter() - started) * 1000)
+
+            yield ToolResultEvent(name=call.name, output=output, ms=ms)
+            trace.append(ToolCall(name=call.name, input=arguments, output=output, ms=ms))
+            results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": call.id,
+                    "content": json.dumps(output, default=str),
+                    "is_error": failed,
+                }
+            )
+        messages.append({"role": "user", "content": results})
+
+    yield DoneEvent(
+        result=AgentResult(
+            text="\n\n".join(spoken),
+            history=messages,
+            trace=trace,
+            iters=iters,
+        )
+    )
+
+
+def _serialise(block: Any) -> dict[str, Any] | None:
+    """Turn one SDK content block into the plain dict the history needs.
+
+    The history is handed back to the frontend as JSON and passed straight
+    into the next call, so it cannot hold SDK objects. Block types we do not
+    recognise are dropped rather than guessed at.
+    """
+    if block.type == "text":
+        return {"type": "text", "text": block.text}
+    if block.type == "tool_use":
+        return {
+            "type": "tool_use",
+            "id": block.id,
+            "name": block.name,
+            "input": dict(block.input or {}),
+        }
+    return None
+
+
+def _run_tool(name: str, arguments: dict[str, Any]) -> tuple[Any, bool]:
+    """Run one tool, returning ``(output, failed)``.
+
+    Nothing raises out of here. A tool that blows up — a bad posting id, an
+    invented status, a tool name the model made up — comes back as a result
+    the model can read and recover from. Killing the turn instead would hand
+    the user a stack trace where an explanation was possible.
+    """
+    function = TOOL_FUNCTIONS.get(name)
+    if function is None:
+        known = ", ".join(sorted(TOOL_FUNCTIONS))
+        return f"No tool named {name!r}. Available tools: {known}", True
+    try:
+        return function(**arguments), False
+    except Exception as exc:  # noqa: BLE001 - reported to the model, not swallowed
+        return f"{type(exc).__name__}: {exc}", True
