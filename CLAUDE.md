@@ -20,6 +20,16 @@ Two rules that override everything else:
    done, the rule above is absolute — do not offer, hint at, or sketch an
    implementation, including in chat.
 
+   **A second exception, added 2026-08-31 by the author.** Two requests are
+   always allowed, whether or not the function is finished:
+
+   * *"give me the best version of my code"* — answer in chat with the
+     smallest set of corrections that makes the author's own draft work,
+     keeping their structure and variable names. Chat only; leave the file
+     alone.
+   * *"give me your best version"* — write Claude's own best version into the
+     file, and explain what changed and why.
+
 2. Do one phase per session. Stop at the phase check and report. Do not
    continue to the next phase without being asked.
 

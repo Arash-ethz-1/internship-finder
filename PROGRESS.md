@@ -4,7 +4,8 @@ Running state of the project. `plan.md` is the spec (what we intend to build);
 this file is the log (what is actually built, what is next, and what we decided
 along the way that the spec does not say).
 
-**Last updated:** 2026-08-30, late. Every phase Claude can build is built.
+**Last updated:** 2026-08-31, session 3. All nine Category B functions are
+written and the whole app runs.
 
 ---
 
@@ -27,41 +28,41 @@ uv run python -m agent_app.cli discover --from crawl --source ashby --limit 40
 
 ## Resume here
 
-**The author is working through the nine Category B functions.** Start here:
+**Session 3, 2026-08-31: the author asked Claude to write all nine.** Problem 1
+was the author's own draft, reviewed in chat and rewritten on request; 2 through
+9 were written by Claude under the "give me your best version" exception in
+CLAUDE.md. `check.py` reads 9/9, 68 exercise tests and 233 main tests pass,
+ruff/tsc/eslint clean.
+
+**The author intends to rewrite `run_agent` himself.** Said at the end of the
+session: *"i will rewrite it tomorrow with fresh soul."* Treat
+`core/agent.py` as a placeholder he is replacing, not as settled code, and do
+not polish it unasked.
+
+Two things the app still needs, neither of them code:
+
+1. **API keys.** There is no `backend/.env` at all. `VOYAGE_API_KEY` for
+   embeddings, `ANTHROPIC_API_KEY` for the agent and letters. Nothing
+   downstream of retrieval has ever run against real data.
+2. **`data/eval/queries.jsonl` is empty.** `run_eval` works, but recall is
+   measured against hand-labelled queries and labelling them is the author's
+   judgement. A few dozen lines of
+   `{"query": ..., "relevant_posting_ids": [...]}` is what turns tuning from
+   vibes into measurement.
+
+Then, in order:
 
 ```
 cd backend
-uv run python check.py            # the scoreboard: 0/9 done, 68 tests
-uv run python check.py 3 -v       # one problem, with the failures
-uv run python try_chunking.py     # see chunking output on a real posting
+uv run python -m agent_app.cli embed     # 5,149 postings -> chunks -> vectors
+uv run python -m agent_app.cli ingest-profile
+uv run python -m agent_app.cli eval      # the first real retrieval number
+uv run python try_chunking.py --all      # chunking health over 200 postings
 ```
 
-Problem statements are in **`backend/exercises/README.md`** — one per function,
-with the contract, worked examples, the formulas for BM25 and RRF, and what is
-left to the author's judgement.
-
-Suggested order. It is a dependency chain, not a difficulty ramp — `dense_scores`
-is the easiest of the nine and depends on nothing, so it is a fine place to
-start if `chunk_posting` feels daunting.
-
-| # | Function | Unlocks |
-|---|---|---|
-| 1 | `chunk_posting` | `cli embed` turns 5,149 postings into vectors |
-| 2 | `chunk_profile_doc` | `cli ingest-profile` |
-| 3 | `dense_scores` | — (start here for a quick win) |
-| 4 | `bm25_scores` | — |
-| 5 | `fuse` | — |
-| 6 | `search` | **`/letters` works, the score bars render** |
-| 7 | `run_agent` | **`/chat` comes alive** |
-| 8 | the four tool descriptions | the agent picks tools *well* |
-| 9 | `recall_at_k`, `run_eval` | `cli eval` — measurement |
-
-Roughly 170 lines of Python in total, plus a hand-labelled
-`data/eval/queries.jsonl` for problem 9.
-
-**Agreed 2026-08-30:** once the author says a function is done, Claude rewrites
-it with its own best version and explains the changes. Until then rule 1 in
-CLAUDE.md is absolute. This exception is in CLAUDE.md too.
+Problem statements are still in **`backend/exercises/README.md`**, and the
+exercise suite still runs — they are the regression tests for anything the
+author rewrites.
 
 `python dev.py` then <http://localhost:5173>. Vite binds to `localhost`, not
 `127.0.0.1` — checking the wrong one looks like the server is down.
@@ -75,9 +76,9 @@ CLAUDE.md is absolute. This exception is in CLAUDE.md too.
 | 1 | Scaffold | Claude | ✅ done | `872e4a5` |
 | 2 | Ingestion | Claude | ✅ done | `403a5c8` |
 | 3 | Core stubs (Category B signatures) | Claude | ✅ done | `49a8989` |
-| 3.5 | `chunk_posting`, `chunk_profile_doc` | **Arash** | ⬜ **your turn — start here** | |
-| 4 | Embeddings plumbing | Claude | ✅ done (end-to-end check needs chunks) | |
-| 5 | Profile corpus | Claude | ✅ format + ingestion path; needs chunk_profile_doc to run | |
+| 3.5 | `chunk_posting`, `chunk_profile_doc` | Arash + Claude | ✅ done 2026-08-31 | |
+| 4 | Embeddings plumbing | Claude | ✅ done (end-to-end check needs an API key) | |
+| 5 | Profile corpus | Claude | ✅ done; runs, needs write-ups in `profile/` | |
 | 6 | Letter drafting | Claude | ✅ done | |
 | 7 | API | Claude | ✅ done | |
 | 8 | Frontend | Claude | ✅ done | |
@@ -86,15 +87,18 @@ CLAUDE.md is absolute. This exception is in CLAUDE.md too.
 | 2.5 | Company discovery | Claude | ✅ done (crawl path unverified live) | |
 | — | Lever EU API host fix | Claude | ✅ done | |
 
-Category B functions the author writes by hand, none of them started:
-`chunk_posting`, `chunk_profile_doc`, `search`, `dense_scores`, `bm25_scores`,
-`fuse`, `run_agent`, the four `TOOL_SCHEMAS` descriptions, `recall_at_k`,
+All nine reserved functions are now written: `chunk_posting`,
+`chunk_profile_doc`, `dense_scores`, `bm25_scores`, `fuse`, `search`,
+`run_agent`, the four `TOOL_SCHEMAS` descriptions, `recall_at_k` and
 `run_eval`.
 
-**Everything else is done.** Each one has a caller waiting for it, a test in
-`tests/test_category_b.py` asserting it still raises, an exercise suite in
-`exercises/` with 68 tests, and an error message naming it when something tries
-to run.
+`tests/test_category_b.py` is deleted — it asserted every one of them still
+raised, and its own docstring said to delete a case once implemented. The
+"stops at the unwritten Category B" tests across `test_api.py`, `test_cli.py`,
+`test_letters.py`, `test_core_scaffolding.py` and `test_profile.py` were
+rewritten to assert the real behaviour instead: an empty index returns no
+hits, a missing key is a clean error, a letter with nothing to ground it in is
+refused.
 
 ---
 
@@ -126,6 +130,11 @@ conflict. Do not "fix" them back.
    installed on this machine.
 8. **Untriaged is a real state.** A posting with no `applications` row is not
    the same as `interested`, and gets its own filter.
+9. **Claude wrote all nine Category B functions on 2026-08-31**, at the
+   author's request, under the "give me your best version" exception. The
+   exercises in `backend/exercises/` stay as they are: they are now the
+   regression tests for the author's own rewrites. Rule 1 of CLAUDE.md no
+   longer has anything to protect unless the author re-stubs a function.
 
 ---
 
@@ -172,8 +181,9 @@ persist; `/stats` shows the pipeline. `/chat` and `/letters/:id` render honest
 error states, because they need the Category B functions.
 
 **Data as of the last ingest run:** 5,149 postings from 22 companies across all
-3 sources. 67 `intern`, 77 `newgrad`, 5,005 `unknown`. 0 chunks, because
-`chunk_posting` is not written. **204 tests pass.**
+3 sources. 67 `intern`, 77 `newgrad`, 5,005 `unknown`. Still 0 chunks — the
+chunker works, but `cli embed` needs `VOYAGE_API_KEY` and has never been run.
+**233 main tests and 68 exercise tests pass.**
 
 ---
 
@@ -191,6 +201,9 @@ error states, because they need the Category B functions.
   permanent fix is moving the project out of OneDrive.
 - **Whether discovery leftovers get an agentic retry loop** (design discussed,
   not decided).
+- **`core/agent.py` is Claude's version, and the author plans to replace it.**
+  Its `SYSTEM_PROMPT` in particular is a first guess that has never been run
+  against the real model.
 
 ---
 
