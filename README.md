@@ -9,10 +9,23 @@ precedence over this file.
 
 ## Delegation boundary
 
-Some functions are deliberately left as `raise NotImplementedError` and are
-written by hand by the author — chunking, retrieval, the agent loop, the tool
-descriptions, and evaluation. See the Category B table in `plan.md`. If the app
-raises `NotImplementedError`, that is the design working, not a bug.
+Nine functions — chunking, retrieval, the agent loop, the tool descriptions and
+evaluation — were reserved to be written by hand rather than delegated, because
+they are the parts worth understanding. See the Category B table in `plan.md`.
+
+All nine are now written and the app runs end to end. The problem statements
+survive as a problem book, and their tests as a regression suite for rewriting
+any of them:
+
+```bash
+cd backend
+uv run python check.py          # the scoreboard: 9/9, 68 tests
+uv run python check.py 6 -v     # one problem, with its failures
+uv run python try_chunking.py   # chunking output on a real posting
+```
+
+These tests live outside the main suite, so `pytest` and CI stay green while a
+function is being rewritten.
 
 ## Setup
 
@@ -62,6 +75,45 @@ uv run python -m agent_app.cli init-db
 Subcommands are added by the phase that makes them meaningful: `ingest`
 (Phase 2), `embed` (Phase 4), `ingest-profile` (Phase 5), `draft-letter`
 (Phase 6), and `chat` / `status` / `eval` (Phase 9).
+
+## First run, in order
+
+Everything below `ingest` needs API keys. `cli status` prints where the
+pipeline currently stands at any point.
+
+```bash
+cd backend
+uv run python -m agent_app.cli ingest          # fetch every board (no keys needed)
+uv run python -m agent_app.cli embed           # chunk + embed  -> VOYAGE_API_KEY
+uv run python -m agent_app.cli ingest-profile  # chunk + embed profile/  -> VOYAGE_API_KEY
+uv run python -m agent_app.cli status          # what is in the database
+```
+
+`embed` is safe to re-run: chunks that already have a vector are skipped and
+repeated text is served from the on-disk cache, so an interrupted run resumes
+for free. It is the one command that spends real money on first use — roughly
+six chunks per posting, at about a thousand characters each.
+
+Once postings are embedded, the rest works:
+
+```bash
+python dev.py                                        # dashboard on :5173
+uv run python -m agent_app.cli chat                  # the agent, in the terminal
+uv run python -m agent_app.cli draft-letter <id>     # a grounded letter
+uv run python -m agent_app.cli eval                  # retrieval numbers
+```
+
+Two of those need content, not code. `draft-letter` refuses unless `profile/`
+holds real write-ups — a letter with nothing to ground it in would be invented,
+so the refusal is the feature; see `profile/README.md` for the format. And
+`eval` reads `data/eval/queries.jsonl`, one hand-labelled line per query:
+
+```json
+{"query": "remote ML internships in Europe", "relevant_posting_ids": ["greenhouse:123"], "note": "why these count"}
+```
+
+Nothing can label those but a person. A few dozen lines is enough to turn
+"this chunk size feels better" into a number that moves.
 
 ## Layout
 
