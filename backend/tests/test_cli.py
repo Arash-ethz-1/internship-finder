@@ -65,8 +65,8 @@ def test_status_summarises_a_populated_database(
     assert "1 postings" in out
     assert "untriaged" in out
     assert "Acme" in out
-    # The honest state of the chunking work.
-    assert "chunk_posting is Category B" in out
+    # An empty chunks table names the command that fills it.
+    assert "cli embed" in out
 
 
 def test_eval_reports_a_missing_eval_set(
@@ -76,33 +76,39 @@ def test_eval_reports_a_missing_eval_set(
     assert "relevant_posting_ids" in capsys.readouterr().err
 
 
-def test_eval_stops_at_the_unwritten_category_b(
+def test_eval_runs_against_an_empty_index(
     conn: sqlite3.Connection, capsys: pytest.CaptureFixture[str], tmp_path
 ) -> None:
+    # Nothing is embedded, so every query retrieves nothing and recall is 0.
+    # The harness still has to run and report that, because "0.000" is the
+    # baseline every later change is measured against.
     path = tmp_path / "queries.jsonl"
     path.write_text('{"query": "ml internships", "relevant_posting_ids": ["greenhouse:1"]}\n')
-    assert cli.main(["eval", "--path", str(path)]) == 3
-    assert "run_eval" in capsys.readouterr().err
+
+    assert cli.main(["eval", "--path", str(path)]) == 0
+
+    out = capsys.readouterr().out
+    assert "1 labelled queries" in out
+    assert "recall@1" in out
 
 
-def test_chat_stops_at_the_unwritten_category_b(
+def test_chat_without_an_api_key_explains_itself(
     conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr("builtins.input", lambda _prompt="": "find me internships")
-    assert cli.main(["chat"]) == 3
-    err = capsys.readouterr().err
-    assert "run_agent" in err
+    assert cli.main(["chat"]) == 2
+    assert "ANTHROPIC_API_KEY" in capsys.readouterr().err
 
 
-def test_chat_warns_about_placeholder_tool_descriptions(
+def test_chat_does_not_warn_once_the_descriptions_are_written(
     conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr("builtins.input", lambda _prompt="": "")
     assert cli.main(["chat"]) == 0
-    assert "tool descriptions are still placeholders" in capsys.readouterr().out
+    assert "placeholders" not in capsys.readouterr().out
 
 
-def test_draft_letter_stops_at_the_unwritten_category_b(
+def test_draft_letter_without_a_profile_corpus_explains_itself(
     conn: sqlite3.Connection, capsys: pytest.CaptureFixture[str]
 ) -> None:
     conn.execute(
@@ -111,8 +117,8 @@ def test_draft_letter_stops_at_the_unwritten_category_b(
         " 'https://e.com', 'b', 'h', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
     )
     conn.commit()
-    assert cli.main(["draft-letter", "greenhouse:1"]) == 3
-    assert "retrieval.search" in capsys.readouterr().err
+    assert cli.main(["draft-letter", "greenhouse:1"]) == 2
+    assert "profile" in capsys.readouterr().err.lower()
 
 
 def test_status_survives_a_console_that_cannot_encode_its_glyphs(

@@ -193,11 +193,11 @@ def test_draft_letter_rejects_an_unknown_posting(conn: sqlite3.Connection) -> No
         letters.draft_letter("greenhouse:missing")
 
 
-def test_draft_letter_raises_until_retrieval_exists(conn: sqlite3.Connection) -> None:
-    # The honest state of this phase: complete, and unable to run because the
-    # Category B search it depends on is not written.
+def test_draft_letter_refuses_without_profile_chunks(conn: sqlite3.Connection) -> None:
+    # A letter with nothing to ground it in would be invented. Refusing is the
+    # feature: the model never gets the chance to make the projects up.
     _insert(conn, make_posting())
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(letters.LetterError, match="profile"):
         letters.draft_letter("greenhouse:1")
 
 

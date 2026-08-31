@@ -224,22 +224,26 @@ def test_filters_lists_companies_present(client: TestClient, conn: sqlite3.Conne
     assert "untriaged" in body["statuses"]
 
 
-# --- the unimplemented halves ----------------------------------------------
+# --- the halves that need credentials or content ---------------------------
 
 
-def test_chat_returns_a_clean_501_naming_the_function(client: TestClient) -> None:
+def test_chat_without_an_api_key_fails_before_the_stream_starts(client: TestClient) -> None:
+    # The failure has to arrive as a status code. Once the SSE stream opens,
+    # the response is a 200 and the browser has no way to be told otherwise.
     response = client.post("/api/chat", json={"message": "find me internships"})
-    assert response.status_code == 501
-    assert "run_agent" in response.json()["detail"]
+    assert response.status_code == 500
+    assert "ANTHROPIC_API_KEY" in response.json()["detail"]
 
 
-def test_letters_returns_a_clean_501_naming_the_function(
+def test_letters_without_a_profile_corpus_is_a_409(
     client: TestClient, conn: sqlite3.Connection
 ) -> None:
+    # Nothing in profile/ means nothing to ground the letter in. That is the
+    # person's state to fix, so it is a 409 with an explanation, not a 500.
     seed(conn)
     response = client.post("/api/letters/greenhouse:1")
-    assert response.status_code == 501
-    assert "retrieval.search" in response.json()["detail"]
+    assert response.status_code == 409
+    assert "profile" in response.json()["detail"].lower()
 
 
 def test_the_rest_of_the_api_still_works_while_those_are_unimplemented(

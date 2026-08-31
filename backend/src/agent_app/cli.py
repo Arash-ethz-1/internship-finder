@@ -155,14 +155,7 @@ def cmd_draft_letter(args: argparse.Namespace) -> int:
 
     try:
         letter = draft_letter(args.posting_id, k=args.chunks)
-    except NotImplementedError:
-        print(
-            "error: letter drafting needs retrieval.search, which is Category B "
-            "and not written yet.",
-            file=sys.stderr,
-        )
-        return 3
-    except (KeyError, LetterError) as exc:
+    except (ConfigError, KeyError, LetterError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
@@ -186,16 +179,7 @@ def cmd_ingest_profile(_args: argparse.Namespace) -> int:
     settings.ensure_dirs()
     conn = get_db()
 
-    try:
-        report = ingest_profile(conn, settings)
-    except NotImplementedError:
-        print(
-            "error: ingesting write-ups needs chunk_profile_doc, which is Category B "
-            "and not written yet.",
-            file=sys.stderr,
-        )
-        return 3
-
+    report = ingest_profile(conn, settings)
     print(report.format())
     if report.documents == 0:
         print("")
@@ -243,7 +227,7 @@ def cmd_embed(args: argparse.Namespace) -> int:
     if chunks == 0:
         print("")
         print("The chunks table is empty, so there was nothing to embed.")
-        print("chunk_posting is Category B and has not been written yet.")
+        print("Run `cli ingest` first — embedding chunks postings already stored.")
     return 0
 
 
@@ -284,7 +268,7 @@ def cmd_status(_args: argparse.Namespace) -> int:
     ]
     print(f"\nchunks: {chunks:,}  ({embedded:,} embedded)")
     if chunks == 0:
-        print("  no chunks yet — chunk_posting is Category B and not written")
+        print("  no chunks yet — run `cli embed` to chunk and embed the postings")
 
     recent = conn.execute(
         "SELECT posting_id, from_status, to_status, changed_at FROM status_history "
@@ -320,13 +304,9 @@ def cmd_eval(args: argparse.Namespace) -> int:
     print(f"{len(queries)} labelled queries from {path}")
     try:
         result = run_eval(queries)
-    except NotImplementedError:
-        print(
-            "error: evaluation needs recall_at_k and run_eval, which are Category B "
-            "and not written yet.",
-            file=sys.stderr,
-        )
-        return 3
+    except ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     print(result.format())
     return 0
 
@@ -363,12 +343,9 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 elif isinstance(event, DoneEvent):
                     print(f"\n  [{event.result.iters} iterations]\n")
                     history = event.result.history
-        except NotImplementedError:
-            print(
-                "error: the agent loop needs run_agent, which is Category B and not written yet.",
-                file=sys.stderr,
-            )
-            return 3
+        except ConfigError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
 
 
 def build_parser() -> argparse.ArgumentParser:

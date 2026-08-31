@@ -1,8 +1,7 @@
 """Phase 5: reading the profile corpus.
 
-Chunking itself is Category B, so what is tested here is everything around it:
-which files are read, which are deliberately skipped, and what happens when the
-folder is empty.
+Which files are read, which are deliberately skipped, what happens when the
+folder is empty, and that a real write-up comes out the other side as chunks.
 """
 
 from __future__ import annotations
@@ -70,12 +69,18 @@ def test_ingest_profile_reports_an_empty_folder(
     assert "No project write-ups" in report.format()
 
 
-def test_ingest_profile_stops_at_the_unwritten_category_b(
+def test_ingest_profile_chunks_a_real_document(
     conn: sqlite3.Connection, settings: Settings
 ) -> None:
     write_doc(settings, "real.md")
-    with pytest.raises(NotImplementedError):
-        ingest_profile(conn, settings)
+
+    report = ingest_profile(conn, settings)
+
+    assert report.documents == 1
+    assert report.chunks >= 1
+    rows = conn.execute("SELECT profile_doc, text FROM chunks ORDER BY ordinal").fetchall()
+    assert rows[0]["profile_doc"] == "real"
+    assert "Some content." in rows[0]["text"]
 
 
 def test_ingest_profile_writes_chunks_once_chunking_exists(
@@ -162,9 +167,16 @@ def test_cli_ingest_profile_explains_an_empty_folder(
     assert "profile/README.md" in out
 
 
-def test_cli_ingest_profile_stops_at_the_unwritten_category_b(
+def test_cli_ingest_profile_chunks_then_stops_without_an_api_key(
     conn: sqlite3.Connection, settings: Settings, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    # Chunking is local and free; embedding is neither. The write-up is
+    # chunked and stored, and only the embedding step reports why it stopped.
     write_doc(settings, "real.md")
-    assert cli.main(["ingest-profile"]) == 3
-    assert "chunk_profile_doc" in capsys.readouterr().err
+
+    assert cli.main(["ingest-profile"]) == 2
+
+    captured = capsys.readouterr()
+    assert "1 document(s)" in captured.out
+    assert "chunk(s)" in captured.out
+    assert "VOYAGE_API_KEY" in captured.err

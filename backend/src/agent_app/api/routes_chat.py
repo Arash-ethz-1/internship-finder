@@ -5,11 +5,11 @@ stream: a tool-use loop takes ten to twenty seconds, and a page that freezes
 for that long and then dumps a blob hides the one thing worth showing — the
 agent working.
 
-``run_agent`` is Category B. Note what is *not* here: no fake loop, no
-placeholder events, no "temporary" implementation to make the endpoint
-testable. The route consumes the generator contract and translates whatever it
-yields; when the generator does not exist yet, the request gets a clean 501
-naming the function.
+The route owns none of the loop: it consumes the generator contract from
+``run_agent`` and translates whatever it yields into SSE frames. Anything that
+goes wrong before the first event — a missing API key, most often — becomes a
+real HTTP error, because once a stream has started the status code is already
+on the wire.
 """
 
 from __future__ import annotations
@@ -27,11 +27,6 @@ from .schemas import ChatRequest
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["chat"])
-
-NOT_IMPLEMENTED_DETAIL = (
-    "The agent loop needs agent_app.core.agent.run_agent, which is Category B "
-    "and not implemented yet."
-)
 
 
 def sse(event: str, data: dict[str, object]) -> str:
@@ -51,20 +46,17 @@ def post_chat(request: ChatRequest) -> StreamingResponse:
     ``error`` if the turn fails partway through.
 
     The first event is pulled *before* the response starts. That is what lets
-    an unimplemented or immediately-broken agent be a real HTTP error with a
-    JSON body rather than a 200 containing bad news — once a stream has begun,
-    the status code is already on the wire and cannot be taken back.
+    an immediately-broken turn — a missing key, a bad request — be a real HTTP
+    error with a JSON body rather than a 200 containing bad news; once a stream
+    has begun, the status code is already on the wire and cannot be taken back.
     """
     events: Iterator[AgentEvent] = iter(())
     first: AgentEvent | None = None
 
     try:
-        # Raises here while run_agent's body is a bare `raise`; once it has a
-        # `yield` it becomes a generator and raises on the `next()` below.
+        # run_agent is a generator, so nothing runs until this next() call.
         events = run_agent(request.message, list(request.history), request.max_iters)
         first = next(events, None)
-    except NotImplementedError as exc:
-        raise HTTPException(501, NOT_IMPLEMENTED_DETAIL) from exc
     except Exception as exc:
         log.exception("agent turn failed before streaming")
         raise HTTPException(500, f"{type(exc).__name__}: {exc}") from exc

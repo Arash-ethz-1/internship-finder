@@ -1,8 +1,7 @@
 """Drafting a motivational letter grounded in the author's own project history.
 
-Category A, except the one call into :func:`agent_app.core.retrieval.search`,
-which is Category B and will raise until it is written. That is expected: this
-module is complete and correct, and simply cannot run yet.
+The only retrieval it does is one call into
+:func:`agent_app.core.retrieval.search`, restricted to profile chunks.
 
 The design constraint that shapes everything here: **a letter that fabricates
 experience is worse than no letter.** The model only ever sees retrieved
@@ -108,8 +107,8 @@ class Letter:
 def find_grounding(posting: Posting, k: int = DEFAULT_PROFILE_CHUNKS) -> list[SearchHit]:
     """Retrieve the most relevant pieces of the author's history for this role.
 
-    The query is the posting's title and body, and the search is restricted to
-    profile chunks. This is the one Category B call in the module.
+    The query is the posting's title and body, and the search is restricted
+    to profile chunks — the author's write-ups, never the postings.
     """
     query = f"{posting.title}\n\n{posting.body[:MAX_POSTING_CHARS]}"
     return retrieval.search(query, SearchFilters(kind="profile"), k=k)

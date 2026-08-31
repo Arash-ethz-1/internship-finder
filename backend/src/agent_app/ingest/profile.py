@@ -4,8 +4,8 @@ The second corpus. Job postings tell you what a company wants; this folder is
 the only record of what the author has actually done, and the letter drafter
 retrieves from it exclusively.
 
-Category A except the call into :func:`agent_app.core.chunking.chunk_profile_doc`,
-which is Category B and will raise until it is written.
+Chunking is delegated to :func:`agent_app.core.chunking.chunk_profile_doc`,
+which splits on markdown headings so a chunk still names its project.
 """
 
 from __future__ import annotations

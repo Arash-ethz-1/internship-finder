@@ -274,11 +274,11 @@ def test_tool_functions_match_the_schemas() -> None:
     assert len(schema_names) == 4
 
 
-def test_search_postings_raises_until_retrieval_exists(conn: sqlite3.Connection) -> None:
-    # The tool itself is Category A and complete; it fails only because the
-    # Category B search behind it is not written. That is correct behaviour.
-    with pytest.raises(NotImplementedError):
-        tools.search_postings("machine learning")
+def test_search_postings_over_an_empty_index_returns_nothing(conn: sqlite3.Connection) -> None:
+    # No chunks means no candidates, so the tool answers "nothing found"
+    # without ever reaching the embedding provider — which is what lets the
+    # agent run against a fresh database with no API key.
+    assert tools.search_postings("machine learning") == []
 
 
 # --- eval set --------------------------------------------------------------
