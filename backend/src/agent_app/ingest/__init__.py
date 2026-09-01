@@ -7,6 +7,11 @@ crawling anything itself.
 """
 
 from .candidates import Candidate, from_crawl, from_file, from_llm, slug_candidates
+from .chunks import (
+    PostingChunkReport,
+    chunk_pending_postings,
+    pending_posting_ids,
+)
 from .discovery import (
     DiscoveryReport,
     company_counts,
@@ -36,7 +41,9 @@ __all__ = [
     "FetchFailed",
     "IngestReport",
     "PoliteClient",
+    "PostingChunkReport",
     "ProfileReport",
+    "chunk_pending_postings",
     "company_counts",
     "format_summary",
     "from_crawl",
@@ -45,6 +52,7 @@ __all__ = [
     "load_companies",
     "ingest_profile",
     "load_verified",
+    "pending_posting_ids",
     "read_profile_docs",
     "run_discovery",
     "run_ingest",

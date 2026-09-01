@@ -28,6 +28,7 @@ from .db import SOURCES, stats, table_names
 from .ingest import (
     Candidate,
     PoliteClient,
+    chunk_pending_postings,
     company_counts,
     format_summary,
     from_crawl,
@@ -79,6 +80,14 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         report = run_ingest(conn, entries, client)
 
     print(format_summary(report))
+
+    # Chunking is local and free, so it runs as part of every ingest: a
+    # posting is searchable by keyword the moment it lands, without waiting
+    # for the one command that costs money. `embed` only adds the vectors.
+    chunked = chunk_pending_postings(conn)
+    if chunked.pending:
+        print("")
+        print(chunked.format())
 
     total = conn.execute("SELECT count(*) FROM postings").fetchone()[0]
     print(f"\n{total} posting(s) in {settings.db_path}")
@@ -207,6 +216,13 @@ def cmd_embed(args: argparse.Namespace) -> int:
     settings = get_settings()
     conn = get_db()
 
+    # Postings ingested before chunking existed, or whose body changed
+    # since, have no chunk rows. Building them here means `embed` never
+    # reports "0 pending" on a database full of postings.
+    chunked = chunk_pending_postings(conn)
+    if chunked.pending:
+        print(chunked.format())
+
     try:
         if args.compact:
             before, after = rebuild_vectors(conn, settings)
@@ -228,7 +244,7 @@ def cmd_embed(args: argparse.Namespace) -> int:
     if chunks == 0:
         print("")
         print("The chunks table is empty, so there was nothing to embed.")
-        print("Run `cli ingest` first — embedding chunks postings already stored.")
+        print("There are no postings to chunk either — run `cli ingest` first.")
     return 0
 
 
