@@ -142,6 +142,40 @@ export interface LetterResponse {
   todos: string[];
 }
 
+/**
+ * One row of the email review queue.
+ *
+ * `posting_id` is null when the matcher declined to guess which application
+ * an email is about — several open applications at one company is common, and
+ * picking one would be a guess. `company` and `title` come from the join and
+ * are null with it.
+ */
+export interface InboxSuggestion {
+  id: number;
+  message_id: string;
+  posting_id: string | null;
+  company_guess: string | null;
+  sender: string;
+  received_at: string | null;
+  subject: string;
+  snippet: string;
+  classification: string | null;
+  confidence: number | null;
+  suggested_status: Status | null;
+  applied: boolean;
+  dismissed: boolean;
+  created_at: string;
+  company: string | null;
+  title: string | null;
+  url: string | null;
+  current_status: string | null;
+}
+
+export interface InboxPage {
+  items: InboxSuggestion[];
+  pending: number;
+}
+
 export interface PostingQuery {
   q?: string;
   company?: string;
@@ -195,6 +229,30 @@ export function setStatus(id: string, status: Status, note = ""): Promise<Applic
 
 export function draftLetter(id: string): Promise<LetterResponse> {
   return request<LetterResponse>(`/api/letters/${encodeURIComponent(id)}`, { method: "POST" });
+}
+
+export function getInbox(pendingOnly = true): Promise<InboxPage> {
+  return request<InboxPage>(`/api/inbox${toQueryString({ pending_only: pendingOnly })}`);
+}
+
+/**
+ * Apply one suggestion. Both arguments are overrides: `postingId` attaches an
+ * unmatched email to a posting the user picked, and `status` overrides what
+ * the classifier suggested.
+ */
+export function acceptSuggestion(
+  id: number,
+  postingId?: string,
+  status?: Status,
+): Promise<ApplicationState> {
+  return request<ApplicationState>(`/api/inbox/${id}/accept`, {
+    method: "POST",
+    body: JSON.stringify({ posting_id: postingId ?? null, status: status ?? null }),
+  });
+}
+
+export function dismissSuggestion(id: number): Promise<InboxSuggestion> {
+  return request<InboxSuggestion>(`/api/inbox/${id}/dismiss`, { method: "POST" });
 }
 
 // --- the agent stream ------------------------------------------------------

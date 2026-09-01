@@ -26,6 +26,9 @@ PROJECT_ROOT = BACKEND_DIR.parent
 DEFAULT_AGENT_MODEL = "claude-opus-5"
 # Discovery just lists company names, so it does not need the agent's model.
 DEFAULT_DISCOVERY_MODEL = "claude-sonnet-5"
+# Classifying a subject line into four buckets is the cheapest judgement call
+# in the app, and it runs once per candidate email.
+DEFAULT_CLASSIFIER_MODEL = "claude-sonnet-5"
 DEFAULT_EMBEDDING_MODEL = "voyage-3.5"
 DEFAULT_EMBEDDING_DIM = 1024
 
@@ -49,12 +52,16 @@ class Settings:
     letters_dir: Path
     eval_dir: Path
     companies_path: Path
+    gmail_token_path: Path
 
     anthropic_api_key: str | None
     voyage_api_key: str | None
+    google_client_id: str | None
+    google_client_secret: str | None
 
     agent_model: str
     discovery_model: str
+    classifier_model: str
     embedding_model: str
     embedding_dim: int
 
@@ -83,6 +90,23 @@ class Settings:
                 "Get a key at https://dashboard.voyageai.com/api-keys"
             )
         return self.voyage_api_key
+
+    def require_google_client(self) -> tuple[str, str | None]:
+        """Return the Google OAuth client id and secret, or explain what to do.
+
+        The secret is optional: a Desktop client created after 2022 has one,
+        but it is not a secret in any meaningful sense on a machine the user
+        controls, and PKCE is what actually protects the exchange.
+        """
+        if not self.google_client_id:
+            raise ConfigError(
+                "GOOGLE_CLIENT_ID is not set. Add it to "
+                f"{self.backend_dir / '.env'} (see .env.example). Create an OAuth "
+                "client of type 'Desktop app' at "
+                "https://console.cloud.google.com/apis/credentials after enabling "
+                "the Gmail API for the project."
+            )
+        return (self.google_client_id, self.google_client_secret)
 
     def ensure_dirs(self) -> None:
         """Create the runtime directories that are gitignored and so absent on a clone."""
@@ -120,10 +144,15 @@ def load_settings() -> Settings:
         letters_dir=data_dir / "letters",
         eval_dir=data_dir / "eval",
         companies_path=BACKEND_DIR / "companies.toml",
+        # The Gmail refresh token. Lives in data/, which is gitignored whole.
+        gmail_token_path=data_dir / "gmail_token.json",
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
         voyage_api_key=os.getenv("VOYAGE_API_KEY") or None,
+        google_client_id=os.getenv("GOOGLE_CLIENT_ID") or None,
+        google_client_secret=os.getenv("GOOGLE_CLIENT_SECRET") or None,
         agent_model=os.getenv("AGENT_MODEL", DEFAULT_AGENT_MODEL),
         discovery_model=os.getenv("DISCOVERY_MODEL", DEFAULT_DISCOVERY_MODEL),
+        classifier_model=os.getenv("CLASSIFIER_MODEL", DEFAULT_CLASSIFIER_MODEL),
         embedding_model=os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
         embedding_dim=int(os.getenv("EMBEDDING_DIM", str(DEFAULT_EMBEDDING_DIM))),
         api_host=os.getenv("API_HOST", "127.0.0.1"),

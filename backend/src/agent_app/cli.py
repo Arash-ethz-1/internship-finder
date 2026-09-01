@@ -11,6 +11,7 @@ Subcommands are added by the phase that makes them meaningful:
 ``chat``            Phase 9
 ``status``          Phase 9
 ``eval``            Phase 9
+``sync-email``      Phase 10
 ==================  =======
 """
 
@@ -270,6 +271,13 @@ def cmd_status(_args: argparse.Namespace) -> int:
     if chunks == 0:
         print("  no chunks yet — run `cli embed` to chunk and embed the postings")
 
+    from .inbox import pending_count
+
+    waiting = pending_count(conn)
+    if waiting:
+        print(f"\ninbox: {waiting} email suggestion(s) waiting for review")
+        print("  review them at /inbox, or run: cli sync-email")
+
     recent = conn.execute(
         "SELECT posting_id, from_status, to_status, changed_at FROM status_history "
         "ORDER BY id DESC LIMIT 5"
@@ -308,6 +316,68 @@ def cmd_eval(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     print(result.format())
+    return 0
+
+
+def cmd_sync_email(args: argparse.Namespace) -> int:
+    """Read application replies out of Gmail and suggest status changes.
+
+    Never changes an application. Suggestions are reviewed in the dashboard.
+    """
+    from .inbox import (
+        GmailError,
+        NotAuthorised,
+        authorize,
+        build_client,
+        list_suggestions,
+        save_token,
+        sync_email,
+    )
+
+    settings = get_settings()
+    settings.ensure_dirs()
+    conn = get_db()
+
+    if args.login:
+        client_id, client_secret = settings.require_google_client()
+        try:
+            token = authorize(client_id, client_secret)
+        except GmailError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        save_token(settings.gmail_token_path, token)
+        print(f"authorised, read-only. Token stored at {settings.gmail_token_path}")
+        if args.login_only:
+            return 0
+
+    try:
+        client = build_client(settings)
+    except NotAuthorised as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        report = sync_email(conn, settings, client, limit=args.limit)
+    except GmailError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    print(report.format())
+
+    pending = list_suggestions(conn, pending_only=True, actionable_only=True)
+    if pending:
+        print()
+        print("waiting for review:")
+        for row in pending[:20]:
+            target = row["posting_id"] or f"(unmatched, looks like {row['company_guess']})"
+            confidence = row["confidence"] or 0.0
+            print(
+                f"  [{row['id']:>4}] {row['classification']:9} {confidence:.2f}  "
+                f"-> {row['suggested_status']:12} {target}"
+            )
+            print(f"         {row['subject'][:88]}")
+        if len(pending) > 20:
+            print(f"  ... and {len(pending) - 20} more")
     return 0
 
 
@@ -500,6 +570,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_eval.add_argument("--path", help="eval set to use (default data/eval/queries.jsonl)")
     p_eval.set_defaults(func=cmd_eval)
+
+    p_sync = sub.add_parser(
+        "sync-email",
+        help="read application replies from Gmail and suggest status changes",
+        description=(
+            "Fetch messages received since your earliest application, match them to "
+            "postings, and classify each as a rejection, an interview invitation, an "
+            "offer, or something else. Read-only: this command never changes an "
+            "application. Every result is a suggestion you accept or dismiss in the "
+            "dashboard at /inbox, and accepting one records which email caused it."
+        ),
+    )
+    p_sync.add_argument(
+        "--login",
+        action="store_true",
+        help="run the Google authorisation flow first (needed once, and after a revoke)",
+    )
+    p_sync.add_argument(
+        "--login-only",
+        action="store_true",
+        help="with --login, stop after authorising instead of syncing",
+    )
+    p_sync.add_argument(
+        "--limit",
+        type=int,
+        default=200,
+        help="most messages to examine in one run (default 200)",
+    )
+    p_sync.set_defaults(func=cmd_sync_email)
 
     p_chat = sub.add_parser(
         "chat",

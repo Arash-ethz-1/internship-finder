@@ -1,13 +1,17 @@
 """SQLite schema and connection helpers.
 
 Stdlib ``sqlite3`` only, no ORM. The schema below is the one in PLAN.md, plus
-two additions that the plan implies but does not spell out:
+a few additions that the plan implies but does not spell out:
 
 * ``postings.body_hash`` — lets re-ingestion tell a changed posting from an
   unchanged one, so chunks are only thrown away and rebuilt when the text
   actually changed.
 * a partial unique index on ``chunks.vector_row`` — two chunks pointing at the
   same row in ``vectors.npy`` is a corruption bug, so the database refuses it.
+* ``email_matches.sender``, ``.snippet`` and ``.dismissed`` — a review queue
+  that cannot show who an email is from is not reviewable, the classifier
+  needs the snippet, and "the user rejects this suggestion" needs somewhere
+  to be recorded or the same email is offered forever.
 """
 
 from __future__ import annotations
@@ -175,7 +179,42 @@ CREATE TABLE IF NOT EXISTS companies (
 );
 
 CREATE INDEX IF NOT EXISTS idx_companies_status ON companies(status);
+
+CREATE TABLE IF NOT EXISTS email_matches (
+    id               INTEGER PRIMARY KEY,
+    message_id       TEXT NOT NULL UNIQUE,   -- Gmail's id; makes re-runs idempotent
+    posting_id       TEXT REFERENCES postings(id) ON DELETE CASCADE,
+    company_guess    TEXT,
+    sender           TEXT NOT NULL DEFAULT '',
+    received_at      TEXT,
+    subject          TEXT NOT NULL DEFAULT '',
+    snippet          TEXT NOT NULL DEFAULT '',
+    classification   TEXT,                   -- rejection | interview | offer | other
+    confidence       REAL,
+    suggested_status TEXT,
+    applied          INTEGER NOT NULL DEFAULT 0,  -- has the user accepted this
+    dismissed        INTEGER NOT NULL DEFAULT 0,  -- has the user rejected it
+    created_at       TEXT NOT NULL,
+    -- A suggestion is pending, accepted or dismissed. Never two of those.
+    CHECK (NOT (applied = 1 AND dismissed = 1))
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_matches_posting ON email_matches(posting_id);
+CREATE INDEX IF NOT EXISTS idx_email_matches_pending
+    ON email_matches(applied, dismissed);
 """
+
+# What the classifier is allowed to return, and the status each one suggests.
+# `other` is the escape hatch and deliberately suggests nothing: a newsletter
+# from a company you applied to is a real email about no application at all.
+CLASSIFICATIONS: tuple[str, ...] = ("rejection", "interview", "offer", "other")
+
+SUGGESTED_STATUS: dict[str, str | None] = {
+    "rejection": "rejected",
+    "interview": "interviewing",
+    "offer": "offer",
+    "other": None,
+}
 
 # A company row is one of these. `unresolved` means we had a name, tried every
 # derived token on every board, and found nothing — recorded so the same

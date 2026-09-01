@@ -138,6 +138,51 @@ class LetterResponse(BaseModel):
     todos: list[str]
 
 
+class InboxSuggestion(BaseModel):
+    """One row of the review queue.
+
+    ``posting_id`` is null when the matcher declined to guess. ``company``,
+    ``title`` and ``current_status`` come from the join and are null with it.
+    """
+
+    id: int
+    message_id: str
+    posting_id: str | None
+    company_guess: str | None
+    sender: str
+    received_at: str | None
+    subject: str
+    snippet: str
+    classification: str | None
+    confidence: float | None
+    suggested_status: str | None
+    applied: bool
+    dismissed: bool
+    created_at: str
+    company: str | None = None
+    title: str | None = None
+    url: str | None = None
+    current_status: str | None = None
+
+
+class InboxPage(BaseModel):
+    """The review queue plus the counts the dashboard shows beside it."""
+
+    items: list[InboxSuggestion]
+    pending: int
+
+
+class InboxAccept(BaseModel):
+    """POST body for accepting a suggestion. Both fields are overrides.
+
+    ``posting_id`` attaches an unmatched email to a posting the user picked;
+    ``status`` overrides what the classifier suggested.
+    """
+
+    posting_id: str | None = None
+    status: StatusLiteral | None = None
+
+
 class ChatRequest(BaseModel):
     """One agent turn. History is client-held; there is no conversations table."""
 

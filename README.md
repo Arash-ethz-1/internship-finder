@@ -42,8 +42,12 @@ only where they are used, and the error names the missing variable.
 
 | Variable | Needed for | Where to get it |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | the agent, letter drafting | <https://console.anthropic.com/settings/keys> |
+| `ANTHROPIC_API_KEY` | the agent, letter drafting, email classification | <https://console.anthropic.com/settings/keys> |
 | `VOYAGE_API_KEY` | embeddings | <https://dashboard.voyageai.com/api-keys> |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | `sync-email` only | <https://console.cloud.google.com/apis/credentials> |
+
+None of these come with a Claude subscription: the Claude API bills separately
+through the Console, and Voyage and Google are other vendors again.
 
 Anthropic has no embeddings endpoint, which is why embeddings are a second
 vendor. Changing `EMBEDDING_MODEL` or `EMBEDDING_DIM` invalidates
@@ -74,7 +78,7 @@ uv run python -m agent_app.cli init-db
 
 Subcommands are added by the phase that makes them meaningful: `ingest`
 (Phase 2), `embed` (Phase 4), `ingest-profile` (Phase 5), `draft-letter`
-(Phase 6), and `chat` / `status` / `eval` (Phase 9).
+(Phase 6), `chat` / `status` / `eval` (Phase 9), and `sync-email` (Phase 10).
 
 ## First run, in order
 
@@ -115,6 +119,41 @@ so the refusal is the feature; see `profile/README.md` for the format. And
 Nothing can label those but a person. A few dozen lines is enough to turn
 "this chunk size feels better" into a number that moves.
 
+## Tracking applications from email
+
+Once a few postings are marked applied, `sync-email` reads the replies:
+
+```bash
+cd backend
+uv run python -m agent_app.cli sync-email --login   # once: opens a browser
+uv run python -m agent_app.cli sync-email           # every time after
+```
+
+It fetches messages received since your earliest application, matches each to
+a posting, and classifies it as a rejection, an interview invitation, an offer,
+or something else. Then it **stops**. Every result is a suggestion in the
+`/inbox` review queue; accepting one is what moves the application, and the
+`status_history` note records which email caused it.
+
+That separation is the whole point. A wrongly auto-applied `rejected` is worse
+than no automation at all, because you stop checking a company that actually
+wanted to interview you.
+
+Setup is a Google Cloud project with the Gmail API enabled and an OAuth client
+of type **Desktop app**; `.env.example` has the steps. Three properties hold by
+construction rather than by care:
+
+- the only scope requested is `gmail.readonly`, and there is no code path that
+  sends, labels or deletes anything;
+- messages are fetched with `format=metadata`, so Gmail never sends a body and
+  there is no body to store;
+- the refresh token lives in `data/gmail_token.json`, which is gitignored.
+
+`plan.md` specifies the OAuth *device* flow. Google restricts that flow to a
+fixed scope list that does not include any Gmail scope, so the flow used is the
+one Google documents for desktop apps: a loopback redirect to `127.0.0.1` on an
+ephemeral port, with PKCE. Every property the plan asked for is unchanged.
+
 ## Layout
 
 ```
@@ -132,7 +171,7 @@ data/       sqlite, vectors.npy, embedding cache, drafted letters — gitignored
 embeddings API, so retry and backoff are written once. `numpy` — the vector
 store is a single array; brute-force cosine is correct at this corpus size.
 `python-dotenv` — keeps keys out of the repo. `anthropic` — the agent's model
-client. `fastapi` + `uvicorn` — the API layer. `pytest`, `ruff` — tests and
+client, and the email classifier's. `fastapi` + `uvicorn` — the API layer. `pytest`, `ruff` — tests and
 lint. No `voyageai` client: Phase 4 requires hand-written batching and backoff,
 so a client that already does that would be redundant.
 
@@ -145,4 +184,7 @@ and the table is headless. `react-router` — four routes need a router.
 from the tokens. `@fontsource-variable/geist{,-mono}` — self-hosted Geist, so
 the app makes no third-party font request. `eslint` and plugins — lint.
 
-No vector database, no agent framework, no chart library.
+No vector database, no agent framework, no chart library. And no Google client
+libraries: Gmail is two GETs and the OAuth exchange is one POST, so `httpx` and
+the standard library cover Phase 10 without adding three packages to hold the
+mailbox credentials.

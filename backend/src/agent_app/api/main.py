@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..config import get_settings
-from . import routes_chat, routes_letters, routes_postings
+from . import routes_chat, routes_inbox, routes_letters, routes_postings
 from .schemas import Health
 
 
@@ -42,6 +42,7 @@ def create_app() -> FastAPI:
     app.include_router(routes_postings.router)
     app.include_router(routes_letters.router)
     app.include_router(routes_chat.router)
+    app.include_router(routes_inbox.router)
 
     return app
 

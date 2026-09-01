@@ -1,8 +1,10 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { BrowserRouter, NavLink, Navigate, Route, Routes } from "react-router";
 
+import { getInbox } from "./api/client";
 import { Chat } from "./routes/Chat";
+import { Inbox } from "./routes/Inbox";
 import { Letters } from "./routes/Letters";
 import { Postings } from "./routes/Postings";
 import { Stats } from "./routes/Stats";
@@ -36,6 +38,14 @@ function useTheme(): [Theme, (theme: Theme) => void] {
 
 function Nav() {
   const [theme, setTheme] = useTheme();
+  // A review queue nobody looks at is the same as no review queue, so the
+  // count is the one number promoted to the nav. `pending` counts only
+  // suggestions that actually propose a status change.
+  const { data: inbox } = useQuery({
+    queryKey: ["inbox"],
+    queryFn: () => getInbox(true),
+    staleTime: 60_000,
+  });
   const link = ({ isActive }: { isActive: boolean }) =>
     `px-2 py-1 font-mono text-2xs rounded-xs ${
       isActive ? "text-signal" : "text-text-muted hover:text-text"
@@ -49,6 +59,12 @@ function Nav() {
       </NavLink>
       <NavLink to="/chat" className={link}>
         chat
+      </NavLink>
+      <NavLink to="/inbox" className={link}>
+        inbox
+        {inbox && inbox.pending > 0 && (
+          <span className="ml-1.5 tabular-nums text-signal">{inbox.pending}</span>
+        )}
       </NavLink>
       <NavLink to="/stats" className={link}>
         stats
@@ -76,6 +92,7 @@ export function App() {
               <Route path="/" element={<Navigate to="/postings" replace />} />
               <Route path="/postings" element={<Postings />} />
               <Route path="/chat" element={<Chat />} />
+              <Route path="/inbox" element={<Inbox />} />
               <Route path="/letters/:id" element={<Letters />} />
               <Route path="/stats" element={<Stats />} />
               <Route

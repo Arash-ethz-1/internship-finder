@@ -29,6 +29,7 @@ def test_init_db_creates_every_table(conn: sqlite3.Connection) -> None:
         "applications",
         "chunks",
         "companies",
+        "email_matches",
         "postings",
         "status_history",
     ]
