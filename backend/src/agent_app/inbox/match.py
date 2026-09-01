@@ -27,6 +27,8 @@ import re
 import sqlite3
 from dataclasses import dataclass
 
+from ..db import TRACKED_STATUSES
+
 # Mail from these domains was relayed by an applicant tracking system, so the
 # domain tells us the vendor and nothing about the employer. Matching on it
 # would map every Greenhouse rejection onto whichever company happened to be
@@ -96,12 +98,22 @@ def open_applications(conn: sqlite3.Connection) -> list[OpenApplication]:
     Closed applications are included on purpose: a rejection can arrive after
     you have already marked something rejected, and an offer can follow an
     interview. Filtering by status here would drop the emails that matter most.
+
+    ``found`` is the one exception, and excluding it is the whole reason
+    :data:`agent_app.db.TRACKED_STATUSES` exists. A search can surface hundreds
+    of postings the person never applied to; matching an email against those
+    would let any message from Stripe be read as a reply to a Stripe job that
+    was only ever looked at, and produce a rejection suggestion for an
+    application that was never sent.
     """
+    marks = ",".join("?" * len(TRACKED_STATUSES))
     return [
         OpenApplication(posting_id=row["posting_id"], company=row["company"], title=row["title"])
         for row in conn.execute(
             "SELECT a.posting_id, p.company, p.title FROM applications a "
-            "JOIN postings p ON p.id = a.posting_id ORDER BY a.updated_at DESC"
+            "JOIN postings p ON p.id = a.posting_id "
+            f"WHERE a.status IN ({marks}) ORDER BY a.updated_at DESC",
+            TRACKED_STATUSES,
         )
     ]
 

@@ -26,6 +26,8 @@ from ..runtime import get_db
 from .schemas import (
     ApplicationState,
     ApplicationUpdate,
+    BulkStatusResult,
+    BulkStatusUpdate,
     FilterOptions,
     PostingDetail,
     PostingPage,
@@ -47,7 +49,7 @@ def get_postings(
     location: str | None = None,
     remote: bool | None = None,
     source: str | None = Query(default=None, description=f"one of {SOURCES}"),
-    status: str | None = Query(default=None, description="a status, or 'untriaged'"),
+    status: str | None = Query(default=None, description="a status, or 'untriaged' / 'tracked'"),
     posted_after: str | None = Query(default=None, description="UTC ISO-8601"),
     sort: str = "posted_at",
     descending: bool = True,
@@ -59,7 +61,7 @@ def get_postings(
     The grid is virtualised client-side, so the default limit is generous: one
     request for the whole working set beats paging at this corpus size.
     """
-    if status is not None and status != "untriaged" and status not in STATUSES:
+    if status is not None and status not in (*STATUSES, "untriaged", "tracked"):
         raise HTTPException(422, f"Unknown status {status!r}")
 
     filters = PostingFilters(
@@ -107,6 +109,26 @@ def patch_application(posting_id: str, update: ApplicationUpdate) -> Application
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     return ApplicationState(**result)
+
+
+@router.patch("/applications", response_model=BulkStatusResult)
+def patch_applications(update: BulkStatusUpdate) -> BulkStatusResult:
+    """Set one status on many postings.
+
+    A posting that cannot be updated is reported by id rather than failing the
+    whole request: selecting thirty and having one stale id undo the other
+    twenty-nine would be worse than partial success the caller can see.
+    """
+    updated: list[ApplicationState] = []
+    failed: dict[str, str] = {}
+    for posting_id in update.posting_ids:
+        try:
+            updated.append(
+                ApplicationState(**tools.update_status(posting_id, update.status, update.note))
+            )
+        except (KeyError, ValueError) as exc:
+            failed[posting_id] = str(exc)
+    return BulkStatusResult(updated=updated, failed=failed)
 
 
 @router.get("/stats", response_model=Stats)

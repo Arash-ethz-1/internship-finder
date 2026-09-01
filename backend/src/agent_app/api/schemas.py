@@ -13,7 +13,14 @@ from pydantic import BaseModel, Field
 from ..db import LEVELS, SOURCES, STATUSES
 
 StatusLiteral = Literal[
-    "interested", "ready_to_submit", "applied", "rejected", "interviewing", "offer", "declined"
+    "found",
+    "interested",
+    "ready_to_submit",
+    "applied",
+    "rejected",
+    "interviewing",
+    "offer",
+    "declined",
 ]
 
 
@@ -68,7 +75,7 @@ class FilterOptions(BaseModel):
     companies: list[str]
     levels: list[str] = Field(default_factory=lambda: list(LEVELS))
     sources: list[str] = Field(default_factory=lambda: list(SOURCES))
-    statuses: list[str] = Field(default_factory=lambda: ["untriaged", *STATUSES])
+    statuses: list[str] = Field(default_factory=lambda: ["tracked", "untriaged", *STATUSES])
 
 
 class ApplicationUpdate(BaseModel):
@@ -86,6 +93,26 @@ class ApplicationState(BaseModel):
     status: str
     note: str
     updated_at: str
+
+
+class BulkStatusUpdate(BaseModel):
+    """Set the same status on several postings at once.
+
+    The list view exists to be acted on in groups, and thirty separate PATCH
+    requests to do one thing is not that. Each posting still gets its own
+    history row, so the log is identical to thirty individual changes.
+    """
+
+    posting_ids: list[str] = Field(min_length=1, max_length=200)
+    status: StatusLiteral
+    note: str = ""
+
+
+class BulkStatusResult(BaseModel):
+    """What a bulk change did, and what it could not do."""
+
+    updated: list[ApplicationState]
+    failed: dict[str, str] = Field(default_factory=dict)
 
 
 class CompanyCount(BaseModel):

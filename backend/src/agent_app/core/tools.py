@@ -14,9 +14,10 @@ and writing them is the closest thing to programming it.
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Any
 
-from ..db import STATUSES, Posting, now_iso
+from ..db import STATUSES, TRACKED_STATUSES, Posting, now_iso
 from ..runtime import get_db
 from . import retrieval
 from .retrieval import SearchFilters
@@ -57,6 +58,100 @@ def search_postings(query: str, filters: dict[str, Any] | None = None) -> list[d
     parsed = SearchFilters.from_dict(filters)
     hits = retrieval.search(query, parsed)
     return [hit.to_dict() for hit in hits]
+
+
+DEFAULT_FIND_LIMIT = 30
+
+# How many chunk hits to ask for per posting wanted. Hits are chunks and this
+# returns postings, so asking for exactly `limit` chunks would collapse to far
+# fewer postings than the caller asked for.
+FIND_OVERSAMPLE = 6
+
+
+def find_postings(
+    query: str,
+    filters: dict[str, Any] | None = None,
+    limit: int = DEFAULT_FIND_LIMIT,
+) -> list[dict[str, Any]]:
+    """Build a working list of postings for the person to act on.
+
+    The difference from :func:`search_postings` is what comes back and what it
+    is for. ``search_postings`` returns chunk excerpts so the *model* can read
+    them; this returns whole postings, deduplicated and capped, so the *person*
+    gets a list they can select from and act on.
+
+    Two rules make the list usable across several searches:
+
+    * only untriaged postings are considered, so anything already in the
+      pipeline is never offered twice;
+    * every posting returned is recorded as ``found``, with a history entry
+      naming the query that surfaced it.
+
+    That recording is what makes the list persist. It is deliberately not a
+    judgement: ``found`` says a search surfaced this, nothing more, and the
+    person still decides whether it becomes ``interested``.
+    """
+    limit = max(1, min(int(limit), 100))
+    parsed = SearchFilters.from_dict({**(filters or {}), "kind": "posting", "status": "untriaged"})
+    hits = retrieval.search(query, parsed, k=limit * FIND_OVERSAMPLE)
+
+    # Collapse chunks onto their posting, keeping each posting's best rank.
+    best: dict[str, Any] = {}
+    for hit in hits:
+        if hit.posting_id and hit.posting_id not in best:
+            best[hit.posting_id] = hit
+        if len(best) >= limit:
+            break
+
+    conn = get_db()
+    found_at = now_iso()
+    out: list[dict[str, Any]] = []
+    for rank, (posting_id, hit) in enumerate(best.items(), start=1):
+        row = conn.execute("SELECT * FROM postings WHERE id = ?", (posting_id,)).fetchone()
+        if row is None:  # pragma: no cover - a chunk outliving its posting
+            continue
+        data = _posting_dict(Posting.from_row(row))
+        data["rank"] = rank
+        data["score"] = hit.score
+        data["component_scores"] = dict(hit.component_scores)
+        data["excerpt"] = hit.text
+        data["status"] = "found"
+        out.append(data)
+
+    _record_found(conn, [d["posting_id"] for d in out], query, found_at)
+    return out
+
+
+def _record_found(
+    conn: sqlite3.Connection,
+    posting_ids: list[str],
+    query: str,
+    found_at: str,
+) -> None:
+    """Mark postings as ``found``, once, with the query that surfaced them.
+
+    Never overwrites an existing row: the search already filtered to untriaged,
+    but a concurrent status change between the search and this write would
+    otherwise be silently undone. ``INSERT ... ON CONFLICT DO NOTHING`` makes
+    that impossible rather than unlikely.
+    """
+    if not posting_ids:
+        return
+    note = f"found by search: {query}"[:200]
+    with conn:
+        for posting_id in posting_ids:
+            cursor = conn.execute(
+                "INSERT INTO applications (posting_id, status, note, updated_at) "
+                "VALUES (?, 'found', ?, ?) ON CONFLICT(posting_id) DO NOTHING",
+                (posting_id, note, found_at),
+            )
+            if cursor.rowcount:
+                conn.execute(
+                    "INSERT INTO status_history "
+                    "(posting_id, from_status, to_status, note, changed_at) "
+                    "VALUES (?, NULL, 'found', ?, ?)",
+                    (posting_id, note, found_at),
+                )
 
 
 def get_posting(posting_id: str) -> dict[str, Any]:
@@ -139,7 +234,13 @@ def update_status(posting_id: str, status: str, note: str = "") -> dict[str, Any
 
 
 def list_shortlist(status: str | None = None) -> list[dict[str, Any]]:
-    """List postings that have an application status, optionally filtered."""
+    """List postings the person is actually pursuing, optionally filtered.
+
+    ``found`` is excluded unless asked for by name. A search can surface
+    hundreds of postings and record every one of them; returning those here
+    would bury the handful the person has actually decided something about,
+    which is the only thing this tool is for.
+    """
     conn = get_db()
     sql = (
         "SELECT p.*, a.status, a.note, a.updated_at FROM applications a "
@@ -151,6 +252,10 @@ def list_shortlist(status: str | None = None) -> list[dict[str, Any]]:
             raise ValueError(f"Unknown status {status!r}. Allowed: {', '.join(STATUSES)}")
         sql += " WHERE a.status = ?"
         params.append(status)
+    else:
+        marks = ",".join("?" * len(TRACKED_STATUSES))
+        sql += f" WHERE a.status IN ({marks})"
+        params.extend(TRACKED_STATUSES)
     sql += " ORDER BY a.updated_at DESC"
 
     out: list[dict[str, Any]] = []
@@ -210,6 +315,60 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                         "status": {"type": "string", "enum": [*STATUSES, "untriaged"]},
                         "posted_after": {"type": "string"},
                     },
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "find_postings",
+        "description": (
+            "Build the person's working list: up to 30 whole postings matching what they "
+            "are looking for, shown to them as a list they can select from, open, and "
+            "change the status of. Use this whenever they are asking to be shown jobs "
+            "rather than asking a question about jobs — 'find me ML research internships "
+            "in Zurich', 'show me quant roles'. Prefer it over search_postings for any "
+            "request phrased as a search. Postings already in the pipeline are excluded "
+            "automatically, so a second search never returns the same posting twice, and "
+            "everything returned is remembered. Do not list the results back in prose: "
+            "the person is already looking at them. Say how many came back and what they "
+            "have in common, and stop."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "What to look for, in natural language, phrased the way a posting "
+                        "would be written ('machine learning research internship, PyTorch') "
+                        "rather than as a command. Put company, city, level and remote in "
+                        "filters instead of here."
+                    ),
+                },
+                "filters": {
+                    "type": "object",
+                    "description": (
+                        "Hard constraints applied before scoring. Exact matches, so use "
+                        "only what the person actually asked for. Note that location is a "
+                        "substring of what the board wrote, so a city works and a continent "
+                        "does not — for 'in Europe', leave location empty and say it in "
+                        "the query instead."
+                    ),
+                    "properties": {
+                        "company": {"type": "string"},
+                        "level": {"type": "string", "enum": ["intern", "newgrad", "unknown"]},
+                        "location": {"type": "string"},
+                        "remote": {"type": "boolean"},
+                        "posted_after": {"type": "string"},
+                    },
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": (
+                        "How many postings to return, at most 30 unless the person asks "
+                        "for more. Fewer and better beats a long list they will not read."
+                    ),
                 },
             },
             "required": ["query"],
@@ -316,6 +475,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
 
 # Name to callable. `run_agent` dispatches through this.
 TOOL_FUNCTIONS: dict[str, Any] = {
+    "find_postings": find_postings,
     "search_postings": search_postings,
     "get_posting": get_posting,
     "update_status": update_status,

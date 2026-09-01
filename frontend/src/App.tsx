@@ -54,11 +54,11 @@ function Nav() {
   return (
     <nav className="flex shrink-0 items-center gap-1 border-b border-hairline px-3 py-1.5">
       <span className="mr-3 font-mono text-2xs text-text-faint">screener</span>
-      <NavLink to="/postings" className={link}>
-        postings
-      </NavLink>
       <NavLink to="/chat" className={link}>
-        chat
+        search
+      </NavLink>
+      <NavLink to="/postings" className={link}>
+        list
       </NavLink>
       <NavLink to="/inbox" className={link}>
         inbox
@@ -89,7 +89,7 @@ export function App() {
           <Nav />
           <div className="min-h-0 flex-1">
             <Routes>
-              <Route path="/" element={<Navigate to="/postings" replace />} />
+              <Route path="/" element={<Navigate to="/chat" replace />} />
               <Route path="/postings" element={<Postings />} />
               <Route path="/chat" element={<Chat />} />
               <Route path="/inbox" element={<Inbox />} />

@@ -271,7 +271,10 @@ def test_list_shortlist(conn: sqlite3.Connection) -> None:
 def test_tool_functions_match_the_schemas() -> None:
     schema_names = {s["name"] for s in tools.TOOL_SCHEMAS}
     assert schema_names == set(tools.TOOL_FUNCTIONS)
-    assert len(schema_names) == 4
+    # Four from plan.md, plus `find_postings` added 2026-09-01 for the list
+    # the dashboard renders. Every tool the model can reach is one more thing
+    # that can go wrong, so the count is asserted rather than left to drift.
+    assert len(schema_names) == 5
 
 
 def test_search_postings_over_an_empty_index_returns_nothing(conn: sqlite3.Connection) -> None:

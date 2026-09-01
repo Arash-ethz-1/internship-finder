@@ -8,7 +8,7 @@ import pytest
 
 from agent_app import cli
 from agent_app.config import ConfigError, Settings
-from agent_app.db import STATUSES, table_names
+from agent_app.db import STATUSES, TRACKED_STATUSES, table_names
 
 
 def test_settings_paths_live_under_the_data_dir(settings: Settings) -> None:
@@ -35,16 +35,37 @@ def test_init_db_creates_every_table(conn: sqlite3.Connection) -> None:
     ]
 
 
-def test_status_set_matches_the_plan() -> None:
-    assert set(STATUSES) == {
-        "interested",
-        "ready_to_submit",
-        "applied",
-        "rejected",
-        "interviewing",
-        "offer",
-        "declined",
-    }
+PLAN_STATUSES = {
+    "interested",
+    "ready_to_submit",
+    "applied",
+    "rejected",
+    "interviewing",
+    "offer",
+    "declined",
+}
+
+
+def test_the_plans_status_set_is_still_all_there() -> None:
+    assert PLAN_STATUSES <= set(STATUSES)
+
+
+def test_found_is_the_only_addition_to_the_plan() -> None:
+    """`found` was added 2026-09-01 and is the one documented deviation.
+
+    Kept as its own test so a second undocumented status is still caught.
+    """
+    assert set(STATUSES) - PLAN_STATUSES == {"found"}
+
+
+def test_found_is_not_a_tracked_status() -> None:
+    """The exclusion the email matcher depends on.
+
+    A posting a search merely surfaced must never be a candidate for "your
+    application was rejected", because no application was ever sent.
+    """
+    assert "found" not in TRACKED_STATUSES
+    assert set(TRACKED_STATUSES) == PLAN_STATUSES
 
 
 def _insert_posting(conn: sqlite3.Connection, posting_id: str = "greenhouse:1") -> str:

@@ -42,6 +42,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 // --- types -----------------------------------------------------------------
 
 export const STATUSES = [
+  "found",
   "interested",
   "ready_to_submit",
   "applied",
@@ -132,6 +133,33 @@ export interface SearchHit {
   score: number;
   rank: number;
   component_scores: Record<string, number>;
+}
+
+/**
+ * One row of the agent's result list. A whole posting, not a chunk excerpt —
+ * `find_postings` returns these so the list can be acted on rather than read.
+ */
+export interface FoundPosting {
+  posting_id: string;
+  company: string;
+  title: string;
+  location: string | null;
+  remote: boolean;
+  level: string;
+  url: string;
+  posted_at: string | null;
+  deadline: string | null;
+  source: string;
+  rank: number;
+  score: number;
+  component_scores: Record<string, number>;
+  excerpt: string;
+  status: StatusOrUntriaged;
+}
+
+export interface BulkStatusResult {
+  updated: ApplicationState[];
+  failed: Record<string, string>;
 }
 
 export interface LetterResponse {
@@ -227,6 +255,18 @@ export function setStatus(id: string, status: Status, note = ""): Promise<Applic
   });
 }
 
+/** Set one status on many postings in a single request. */
+export function setStatusBulk(
+  postingIds: string[],
+  status: Status,
+  note = "",
+): Promise<BulkStatusResult> {
+  return request<BulkStatusResult>("/api/applications", {
+    method: "PATCH",
+    body: JSON.stringify({ posting_ids: postingIds, status, note }),
+  });
+}
+
 export function draftLetter(id: string): Promise<LetterResponse> {
   return request<LetterResponse>(`/api/letters/${encodeURIComponent(id)}`, { method: "POST" });
 }
@@ -276,6 +316,9 @@ export interface DoneEvent {
   kind: "done";
   iters: number;
   text: string;
+  /** The full message thread including this turn. Pass it back as `history`
+   *  on the next call so follow-up questions have something to refer to. */
+  history: unknown[];
 }
 export interface ErrorEvent {
   kind: "error";

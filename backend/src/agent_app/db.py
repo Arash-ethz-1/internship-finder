@@ -35,10 +35,16 @@ def now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-# The full status set from PLAN.md's data model. `interested` is the entry
-# point; a posting with no `applications` row at all is untriaged, which is a
-# distinct state and not the same as `interested`.
+# The full status set from PLAN.md's data model, plus `found` (added
+# 2026-09-01). A posting with no `applications` row at all is untriaged, which
+# is a distinct state and not the same as any of these.
+#
+# `found` is the entry point and the only status nobody chooses: the agent's
+# `find_postings` writes it when a search surfaces a posting, so results
+# persist and a later search never returns the same posting twice. It records
+# provenance, not a decision -- the person has not judged the posting yet.
 STATUSES: tuple[str, ...] = (
+    "found",
     "interested",
     "ready_to_submit",
     "applied",
@@ -47,6 +53,13 @@ STATUSES: tuple[str, ...] = (
     "offer",
     "declined",
 )
+
+# The statuses that mean the person actually did something about a posting.
+# `found` is excluded on purpose, and the exclusion is load-bearing: the email
+# matcher resolves a message against this set, so a posting that a search
+# merely surfaced must never be a candidate for "your application was
+# rejected". Anything that means "my pipeline" filters on this, not STATUSES.
+TRACKED_STATUSES: tuple[str, ...] = tuple(s for s in STATUSES if s != "found")
 
 SOURCES: tuple[str, ...] = ("greenhouse", "lever", "ashby")
 
@@ -268,7 +281,7 @@ class PostingFilters:
     location: str | None = None
     remote: bool | None = None
     source: str | None = None
-    status: str | None = None  # a status, or "untriaged"
+    status: str | None = None  # a status, or "untriaged" / "tracked"
     posted_after: str | None = None
 
 
@@ -309,6 +322,10 @@ def _posting_where(filters: PostingFilters) -> tuple[str, list[Any]]:
         params.append(filters.posted_after)
     if filters.status == "untriaged":
         where.append("a.posting_id IS NULL")
+    elif filters.status == "tracked":
+        # Everything the person has touched, whatever they decided. The grid
+        # opens on this: 24,000 untriaged rows is a pile, not a list.
+        where.append("a.posting_id IS NOT NULL")
     elif filters.status:
         where.append("a.status = ?")
         params.append(filters.status)

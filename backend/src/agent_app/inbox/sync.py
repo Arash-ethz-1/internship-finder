@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from ..config import Settings
-from ..db import STATUSES, now_iso
+from ..db import STATUSES, TRACKED_STATUSES, now_iso
 from .classify import UNCLASSIFIED, Classification, classify
 from .gmail import EmailMessage, GmailClient
 from .match import Match, match_email, open_applications
@@ -91,7 +91,11 @@ def earliest_application(conn: sqlite3.Connection) -> str | None:
     This is the horizon PLAN.md specifies: there is no point reading mail from
     before the first application was recorded.
     """
-    row = conn.execute("SELECT min(updated_at) AS earliest FROM applications").fetchone()
+    marks = ",".join("?" * len(TRACKED_STATUSES))
+    row = conn.execute(
+        f"SELECT min(updated_at) AS earliest FROM applications WHERE status IN ({marks})",
+        TRACKED_STATUSES,
+    ).fetchone()
     return row["earliest"] if row and row["earliest"] else None
 
 

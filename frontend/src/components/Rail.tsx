@@ -93,7 +93,7 @@ export function Rail({
       </Group>
 
       <Group label="status">
-        {["untriaged", ...Object.keys(STATUS_LABELS).filter((s) => s !== "untriaged")].map((s) => (
+        {["tracked", "untriaged", ...Object.keys(STATUS_LABELS).filter((s) => s !== "untriaged")].map((s) => (
           <Radio
             key={s}
             name="status"

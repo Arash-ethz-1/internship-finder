@@ -1,4 +1,5 @@
-import type { AgentEvent, SearchHit } from "../api/client";
+import type { AgentEvent, FoundPosting, SearchHit } from "../api/client";
+import { ResultList } from "./ResultList";
 import { ScoreBar, ScoreLegend } from "./ScoreBar";
 
 /**
@@ -65,6 +66,16 @@ export function reduceEvents(events: AgentEvent[]): {
   return { steps, text, error, done };
 }
 
+/** `find_postings` returns whole postings; a posting_id with no chunk_id is
+ *  what tells them apart from the chunk hits `search_postings` returns. */
+function postingsFrom(output: unknown): FoundPosting[] {
+  if (!Array.isArray(output)) return [];
+  return output.filter(
+    (item): item is FoundPosting =>
+      typeof item === "object" && item !== null && "posting_id" in item && "excerpt" in item,
+  );
+}
+
 function hitsFrom(output: unknown): SearchHit[] {
   if (!Array.isArray(output)) return [];
   return output.filter(
@@ -74,7 +85,8 @@ function hitsFrom(output: unknown): SearchHit[] {
 }
 
 function ToolStep({ step }: { step: TraceStep }) {
-  const hits = hitsFrom(step.output);
+  const postings = postingsFrom(step.output);
+  const hits = postings.length > 0 ? [] : hitsFrom(step.output);
   const max = hits.reduce((best, hit) => Math.max(best, hit.score), 0);
 
   return (
@@ -110,7 +122,9 @@ function ToolStep({ step }: { step: TraceStep }) {
         </div>
       )}
 
-      {!step.pending && hits.length === 0 && step.output !== undefined && (
+      {postings.length > 0 && <ResultList key={step.id} postings={postings} />}
+
+      {!step.pending && hits.length === 0 && postings.length === 0 && step.output !== undefined && (
         <pre className="mt-2 max-h-40 overflow-auto font-mono text-2xs text-text-muted">
           {JSON.stringify(step.output, null, 2)}
         </pre>

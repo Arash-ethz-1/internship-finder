@@ -170,6 +170,15 @@ conflict. Do not "fix" them back.
 
 Small, deliberate, and worth knowing before someone "corrects" them.
 
+- **`ingest/chunks.py`** is a sixth module in that folder, added 2026-09-01.
+  Nothing ever called `chunk_posting`: Phase 2 ends at "the body is stored",
+  Phase 4 begins at "chunks without a vector_row get one", and the step between
+  them belonged to no phase — so `chunks` stayed empty and every posting was
+  invisible to search. `chunk_pending_postings()` closes it, and both `cli
+  ingest` and `cli embed` call it. A posting is pending when it has no chunk
+  rows at all, which makes it self-healing: the existing 5,149 got chunked on
+  the next run, and a body change still works because the upsert drops the old
+  rows. `tests/test_chunk_postings.py` is the regression guard.
 - **`ingest/runner.py`** is a fifth module in a folder the plan lists four for.
   The HTTP client, upserts and orchestration had to live somewhere.
 - **`Posting` lives in `db.py`**, not `ingest/`. Both halves need it, and this
@@ -238,9 +247,9 @@ the pending count in the nav. `/chat` and `/letters/:id` work once the keys are
 in and the corpus is embedded.
 
 **Data as of the last ingest run:** 5,149 postings from 22 companies across all
-3 sources. 67 `intern`, 77 `newgrad`, 5,005 `unknown`. Still 0 chunks — the
-chunker works, but `cli embed` needs `VOYAGE_API_KEY` and has never been run.
-**290 main tests and 68 exercise tests pass.**
+3 sources. 67 `intern`, 77 `newgrad`, 5,005 `unknown`. Chunked on 2026-09-01:
+**34,008 chunks**, 6.6 per posting, none embedded yet — `cli embed` still needs
+`VOYAGE_API_KEY`. **297 main tests and 68 exercise tests pass.**
 
 ---
 

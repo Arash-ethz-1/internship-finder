@@ -9,6 +9,7 @@ import type { StatusOrUntriaged } from "../api/client";
  */
 const STYLES: Record<StatusOrUntriaged, { dot: string; label: string; faded?: boolean }> = {
   untriaged: { dot: "bg-transparent border border-hairline", label: "text-text-faint" },
+  found: { dot: "bg-status-found", label: "text-text-faint" },
   interested: { dot: "bg-status-interested", label: "text-text-muted" },
   ready_to_submit: { dot: "bg-status-ready-to-submit", label: "text-signal" },
   applied: { dot: "bg-status-applied", label: "text-status-applied" },
@@ -18,8 +19,10 @@ const STYLES: Record<StatusOrUntriaged, { dot: string; label: string; faded?: bo
   declined: { dot: "bg-status-declined", label: "text-status-declined", faded: true },
 };
 
-export const STATUS_LABELS: Record<StatusOrUntriaged, string> = {
+export const STATUS_LABELS: Record<string, string> = {
   untriaged: "untriaged",
+  tracked: "on my list",
+  found: "found",
   interested: "interested",
   ready_to_submit: "ready",
   applied: "applied",

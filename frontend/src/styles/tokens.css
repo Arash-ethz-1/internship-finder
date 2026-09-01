@@ -22,6 +22,10 @@
 
   /* Status ramp. Muted on purpose: a row's status should read from across the
      room without reading the label, but must not compete with --signal. */
+  /* `found` is provenance, not a decision: a search surfaced it and nobody
+     has judged it yet. Faintest thing on the ramp, so a list of thirty of
+     them never competes with the handful that were actually chosen. */
+  --status-found: #a3a7ad;
   --status-interested: #6b7078;
   --status-ready-to-submit: var(--signal);
   --status-applied: #5a6b7c;
@@ -51,10 +55,12 @@
     --text: #e8e8e6;
     --text-muted: #9aa0a8;
     --text-faint: #6b7078;
+    --status-found: #5a5f66;
   }
 }
 
 :root[data-theme="dark"] {
+  --status-found: #5a5f66;
   --surface: var(--ink);
   --surface-raised: #1a1d24;
   --surface-sunken: #101216;
@@ -102,6 +108,7 @@
   --color-text-faint: var(--text-faint);
   --color-signal: var(--signal);
 
+  --color-status-found: var(--status-found);
   --color-status-interested: var(--status-interested);
   --color-status-ready-to-submit: var(--status-ready-to-submit);
   --color-status-applied: var(--status-applied);

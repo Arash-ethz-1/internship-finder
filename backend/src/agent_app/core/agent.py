@@ -142,7 +142,15 @@ class DoneEvent:
     event_name = "done"
 
     def to_dict(self) -> dict[str, Any]:
-        return {"iters": self.result.iters, "text": self.result.text}
+        # `history` travels with the event so the browser can pass it back on
+        # the next turn. There is no conversations table: the client holds the
+        # thread, which is what keeps a follow-up like "mark the first three"
+        # able to refer to anything at all.
+        return {
+            "iters": self.result.iters,
+            "text": self.result.text,
+            "history": self.result.history,
+        }
 
 
 AgentEvent = ToolCallEvent | ToolResultEvent | TextEvent | DoneEvent

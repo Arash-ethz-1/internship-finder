@@ -28,7 +28,10 @@ const ROW = 36;
 
 export function Postings() {
   const queryClient = useQueryClient();
-  const [query, setQuery] = useState<PostingQuery>({ limit: 5000 });
+  // The grid is the working list, not the pile: it shows what has a status.
+  // `status: "tracked"` is the server's name for "anything but untriaged" —
+  // without it, opening this view means scrolling 24,000 rows nobody chose.
+  const [query, setQuery] = useState<PostingQuery>({ limit: 5000, status: "tracked" });
   const [cursor, setCursor] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -138,14 +141,9 @@ export function Postings() {
           <EmptyState
             title="No postings match"
             detail={
-              postings.data.total === 0 && !query.q && !query.level
-                ? "The database is empty. Fetch postings from the configured job boards, then reload."
+              query.status === "tracked" && !query.q && !query.level
+                ? "Nothing is on your list yet. Search on the chat page and keep what looks right — anything you keep shows up here."
                 : "Nothing matches these filters. Clear one from the left rail."
-            }
-            command={
-              postings.data.total === 0
-                ? "cd backend && uv run python -m agent_app.cli ingest"
-                : undefined
             }
           />
         )}
