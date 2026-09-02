@@ -7,14 +7,17 @@ from the old chunks, and nothing anywhere says so. Saving through this router
 rewrites the file, re-chunks it and marks the chunks for embedding in one step,
 so the two can never drift.
 
-Re-embedding is the one part that is not immediate. Chunking is free and local;
-turning chunks into vectors is the step that costs, so a saved document is
-searchable by keyword at once and by meaning after the next `cli embed`. The
-response says which, rather than pretending it is all done.
+Embedding happens here too, which it deliberately does not for postings. The
+whole of `profile/` is a handful of documents and a few dozen chunks, so a save
+costs seconds; the posting corpus is 135,000 chunks and had to go to a cluster.
+The asymmetry is the point -- a write-up you just edited grounds the very next
+letter, rather than the previous version of it grounding letters until somebody
+remembers to run `cli embed`.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from pathlib import Path
@@ -26,6 +29,8 @@ from ..config import Settings, get_settings
 from ..ingest.profile import SKIP, doc_slug
 from ..runtime import get_db
 from .schemas import ProfileDoc, ProfileDocBody, ProfileList, ProfileSummary
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
 
@@ -115,7 +120,11 @@ def get_doc(conn: Conn, slug: str) -> ProfileDoc:
 
 @router.put("/{slug}", response_model=ProfileDoc)
 def put_doc(conn: Conn, slug: str, body: ProfileDocBody) -> ProfileDoc:
-    """Write a document and re-chunk it in the same request.
+    """Write a document, re-chunk it and embed it, in one request.
+
+    Creates the file when the slug is new, so this is also how a write-up is
+    added -- there is no separate create route, because "save this text under
+    this name" is the same operation either way.
 
     The old chunks are deleted rather than updated. They describe text that no
     longer exists, and a letter grounded in a paragraph the author has since
@@ -137,14 +146,38 @@ def put_doc(conn: Conn, slug: str, body: ProfileDocBody) -> ProfileDoc:
                 [(slug, chunk.ordinal, chunk.text) for chunk in chunks],
             )
 
+    embedded = _embed_now(slug) if chunks else 0
+
     return ProfileDoc(
         slug=slug,
         title=_first_heading(path) or slug,
         text=text,
         chunks=len(chunks),
-        embedded=0,
+        embedded=embedded,
         ingested=slug not in SKIP,
     )
+
+
+def _embed_now(slug: str) -> int:
+    """Embed the write-ups that have no vector yet, inline.
+
+    Unlike a posting corpus this is affordable: the whole of ``profile/`` is a
+    handful of documents and a few dozen chunks, so a save costs seconds rather
+    than the twenty-two hours the postings needed. Doing it here is what makes
+    the letter drafter able to ground in what you just wrote, instead of in the
+    previous version until someone remembers to run ``cli embed``.
+
+    A failure is swallowed on purpose. The text is already saved and chunked;
+    losing the save because the embedding provider was unavailable would be a
+    far worse trade than a write-up that is briefly keyword-only.
+    """
+    try:
+        from ..core.embeddings import embed_all_pending
+
+        return embed_all_pending().embedded
+    except Exception:  # noqa: BLE001 - the save has already succeeded
+        log.warning("saved %s but could not embed it; run `cli embed`", slug, exc_info=True)
+        return 0
 
 
 @router.delete("/{slug}", status_code=204)

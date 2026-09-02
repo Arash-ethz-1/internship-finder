@@ -101,8 +101,33 @@ def _to_posting(posting_id: str, draft: ManualPosting) -> Posting:
     )
 
 
+def _chunk(conn: sqlite3.Connection, posting: Posting) -> int:
+    """Split a manual posting's body into chunks, replacing any it had.
+
+    Done inline rather than left to the next ``cli embed`` because chunking is
+    local and free, and a posting you just typed in and then cannot find would
+    look broken. It is what makes the posting keyword-searchable immediately:
+    :func:`agent_app.core.retrieval.search` scores a chunk with no
+    ``vector_row`` as zero on the dense side but still ranks it on BM25.
+
+    Embedding stays where it is. That one costs, so it waits for ``cli embed``
+    along with everything else -- which is the difference the dialog reports
+    rather than hides.
+    """
+    from ..core.chunking import chunk_posting
+
+    conn.execute("DELETE FROM chunks WHERE posting_id = ?", (posting.id,))
+    chunks = chunk_posting(posting)
+    if chunks:
+        conn.executemany(
+            "INSERT INTO chunks (posting_id, ordinal, text) VALUES (?, ?, ?)",
+            [(posting.id, chunk.ordinal, chunk.text) for chunk in chunks],
+        )
+    return len(chunks)
+
+
 def create(conn: sqlite3.Connection, draft: ManualPosting) -> Posting:
-    """Add a posting you entered yourself, ready to be chunked and embedded."""
+    """Add a posting you entered yourself, chunked and located immediately."""
     _validate(draft)
     posting = _to_posting(make_manual_id(draft.company), draft)
 
@@ -130,18 +155,30 @@ def create(conn: sqlite3.Connection, draft: ManualPosting) -> Posting:
             ),
         )
         index_posting(conn, posting.id, posting.location)
+        chunks = _chunk(conn, posting)
 
-    log.info("added manual posting %s (%s)", posting.id, posting.company)
+    log.info(
+        "added manual posting %s (%s), %d chunk(s) awaiting embedding",
+        posting.id,
+        posting.company,
+        chunks,
+    )
     return posting
 
 
 def update(conn: sqlite3.Connection, posting_id: str, draft: ManualPosting) -> Posting:
     """Edit a manual posting in place.
 
-    Chunks are dropped when the body changes, exactly as ``upsert_postings``
-    does for a board: the old chunks describe text that no longer exists, and
-    leaving them means searching a posting that is not there any more. The next
-    ``cli embed`` rebuilds them.
+    Chunks are rebuilt when the body changes, and only then. The old ones
+    describe text that no longer exists, so leaving them means searching a
+    posting that is not there any more -- the same reason ``upsert_postings``
+    drops a board posting's chunks. Rebuilding immediately rather than waiting
+    for ``cli embed`` keeps the edited text findable by keyword straight away;
+    the new chunks have no vectors until the next embed, which is the honest
+    half of the trade.
+
+    An edit that only changes the title or the location leaves the chunks
+    alone, so a typo fix does not cost a re-embedding.
     """
     existing = get_posting(conn, posting_id)
     if existing is None:
@@ -175,7 +212,7 @@ def update(conn: sqlite3.Connection, posting_id: str, draft: ManualPosting) -> P
             ),
         )
         if posting.body_hash != existing.body_hash:
-            conn.execute("DELETE FROM chunks WHERE posting_id = ?", (posting_id,))
+            _chunk(conn, posting)
         index_posting(conn, posting_id, posting.location)
 
     return posting

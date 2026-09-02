@@ -176,6 +176,10 @@ class Stats(BaseModel):
     by_source: dict[str, int]
     by_level: dict[str, int]
     recent: list[DayCount]
+    # Chunks with no vector. A posting in this state is tracked but findable by
+    # neither half of search, so this is what says how much of the corpus the
+    # search cannot currently see.
+    pending_embedding: int = 0
 
 
 class SearchHitModel(BaseModel):

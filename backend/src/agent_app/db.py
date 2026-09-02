@@ -594,6 +594,14 @@ def stats(conn: sqlite3.Connection, recent_days: int = 30) -> dict[str, Any]:
         "by_source": by_source,
         "by_level": by_level,
         "recent": list(reversed(recent)),
+        # Chunks with no vector yet. A posting in this state is tracked but
+        # cannot be found by either half of search -- the dense side has no
+        # vector, and the keyword side reads a prebuilt index the chunk is not
+        # in. `cli embed` fixes both, so this number is the standing reminder
+        # that some of the corpus is invisible to the thing that searches it.
+        "pending_embedding": conn.execute(
+            "SELECT count(*) FROM chunks WHERE vector_row IS NULL"
+        ).fetchone()[0],
     }
 
 

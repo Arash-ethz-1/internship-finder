@@ -246,15 +246,29 @@ export function Postings() {
           </div>
         )}
 
-        <div className="flex shrink-0 items-center justify-between border-t border-hairline px-3 py-1.5 font-mono text-2xs text-text-faint">
+        <div className="flex shrink-0 items-center justify-between gap-4 border-t border-hairline px-3 py-1.5 font-mono text-2xs text-text-faint">
           <span>j/k move · enter open · 1-5 status · esc close</span>
-          <button
-            type="button"
-            onClick={() => setAdding(true)}
-            className="text-text-muted hover:text-signal"
-          >
-            + add a posting
-          </button>
+          <div className="flex items-center gap-4">
+            {/* Standing reminder rather than a one-off toast. A posting that
+                is chunked but not embedded is findable by neither half of
+                search, and the only thing worse than that is not knowing. */}
+            {stats.data && stats.data.pending_embedding > 0 && (
+              <span
+                className="text-status-interviewing"
+                title="These postings are tracked but cannot be found by search yet. Run: uv run python -m agent_app.cli embed"
+              >
+                {stats.data.pending_embedding} chunk(s) not searchable — run
+                cli embed
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => setAdding(true)}
+              className="text-text-muted hover:text-signal"
+            >
+              + add a posting
+            </button>
+          </div>
         </div>
       </main>
 

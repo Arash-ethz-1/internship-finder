@@ -20,9 +20,10 @@ import { ErrorState, LoadingState } from "../components/states";
  * Saving here rewrites the file and re-chunks it in the same request, so the
  * two cannot drift.
  *
- * Embedding is the one part that is not immediate, and the counts say which:
- * a saved document is searchable by keyword at once and by meaning after the
- * next `cli embed`.
+ * Saving embeds too, which the postings grid deliberately does not: the whole
+ * of `profile/` is a few dozen chunks, so it costs seconds, where the posting
+ * corpus is 135,000 and had to go to a cluster. That asymmetry is what lets a
+ * write-up you just edited ground the very next letter.
  */
 export function Profile() {
   const queryClient = useQueryClient();
@@ -62,6 +63,15 @@ export function Profile() {
     const timer = setTimeout(() => setSaved(false), 2000);
     return () => clearTimeout(timer);
   }, [saved]);
+
+  // Creating a write-up is a save to a slug that has no file yet, so it is the
+  // same call — only the heading it starts from differs.
+  const create = useMutation({
+    mutationFn: (newSlug: string) =>
+      saveProfileDoc(newSlug, `# ${newSlug.replace(/-/g, " ")}\n\n`),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: ["profile"] }),
+  });
 
   const save = useMutation({
     mutationFn: () => saveProfileDoc(slug as string, text),
@@ -105,18 +115,50 @@ export function Profile() {
           ))}
           {documents.length === 0 && (
             <p className="px-3 py-4 text-xs text-text-faint">
-              Nothing in <span className="font-mono">profile/</span> yet. Add a
-              markdown file per project — what you built, with what, and what
-              happened.
+              Nothing in <span className="font-mono">profile/</span> yet. Add
+              one per project — what you built, with what, and what happened.
             </p>
           )}
+
+          {/* Creating and saving are the same request: PUT to a slug that does
+              not exist writes the file. So this only has to invent the name
+              and a heading to start from. */}
+          <button
+            type="button"
+            onClick={() => {
+              const name = window.prompt(
+                "Name for the new write-up (lowercase, hyphens):",
+                "",
+              );
+              if (name === null) return;
+              const newSlug = name
+                .trim()
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/^-+|-+$/g, "");
+              if (!newSlug) return;
+              if (documents.some((d) => d.slug === newSlug)) {
+                setChosen(newSlug);
+                return;
+              }
+              setChosen(newSlug);
+              setEdits((current) => ({
+                ...current,
+                [newSlug]: `# ${name.trim()}\n\n`,
+              }));
+              create.mutate(newSlug);
+            }}
+            className="w-full border-b border-hairline px-3 py-2 text-left text-xs text-text-muted hover:bg-surface-sunken hover:text-signal"
+          >
+            + add a write-up
+          </button>
         </div>
 
         {list.data && list.data.pending_embedding > 0 && (
           <div className="border-t border-hairline px-3 py-2 font-mono text-2xs text-text-faint">
-            {list.data.pending_embedding} chunk(s) awaiting embedding
+            {list.data.pending_embedding} chunk(s) not embedded
             <div className="mt-1 text-text-muted">
-              uv run python -m agent_app.cli embed
+              saving embeds — run cli embed if this persists
             </div>
           </div>
         )}

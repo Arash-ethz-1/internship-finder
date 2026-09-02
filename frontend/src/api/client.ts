@@ -177,6 +177,9 @@ export interface Stats {
   by_source: Record<string, number>;
   by_level: Record<string, number>;
   recent: { date: string; count: number }[];
+  /** Chunks with no vector. Those postings are tracked but findable by neither
+   *  half of search until `cli embed` runs. */
+  pending_embedding: number;
 }
 
 /**

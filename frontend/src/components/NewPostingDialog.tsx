@@ -73,19 +73,24 @@ export function NewPostingDialog({
     draft.url.trim() !== "";
 
   return (
+    /* Centred with padding on both sides rather than pushed down from the top,
+       and capped at the viewport height: with a fixed top offset and no cap,
+       the description field pushed the footer — and the submit button with it —
+       off the bottom of a laptop screen. The fields scroll; the header and the
+       footer stay put, so the way out of the dialog is always reachable. */
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-ink/40 pt-24"
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-ink/40 p-6"
       onClick={onClose}
       role="presentation"
     >
       <div
-        className="w-[34rem] max-w-[92vw] border border-hairline bg-surface rounded-xs shadow-lg"
+        className="flex max-h-full w-[34rem] max-w-[92vw] flex-col border border-hairline bg-surface rounded-xs shadow-lg"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="Add a posting"
       >
-        <div className="flex items-baseline justify-between border-b border-hairline px-4 py-2.5">
+        <div className="flex shrink-0 items-baseline justify-between border-b border-hairline px-4 py-2.5">
           <h2 className="text-sm">Add a posting</h2>
           <span className="font-mono text-2xs text-text-faint">
             for anything without a public job board
@@ -93,95 +98,105 @@ export function NewPostingDialog({
         </div>
 
         <form
-          className="flex flex-col gap-3 px-4 py-3"
+          className="flex min-h-0 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
             if (ready) create.mutate(draft);
           }}
         >
-          <Field label="company" required>
-            <input
-              ref={firstField}
-              autoFocus
-              value={draft.company}
-              onChange={(e) => setDraft({ ...draft, company: e.target.value })}
-              className={INPUT}
-              placeholder="Google"
-            />
-          </Field>
-
-          <Field label="title" required>
-            <input
-              value={draft.title}
-              onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-              className={INPUT}
-              placeholder="Software Engineering Intern, Summer 2027"
-            />
-          </Field>
-
-          <Field label="url" required>
-            <input
-              value={draft.url}
-              onChange={(e) => setDraft({ ...draft, url: e.target.value })}
-              className={INPUT}
-              placeholder="https://www.linkedin.com/jobs/view/..."
-            />
-          </Field>
-
-          <div className="flex gap-3">
-            <Field label="location" className="flex-1">
+          <div className="flex min-h-0 flex-col gap-3 overflow-y-auto px-4 py-3">
+            <Field label="company" required>
               <input
-                value={draft.location ?? ""}
+                ref={firstField}
+                autoFocus
+                value={draft.company}
                 onChange={(e) =>
-                  setDraft({ ...draft, location: e.target.value })
+                  setDraft({ ...draft, company: e.target.value })
                 }
                 className={INPUT}
-                placeholder="Zurich, Switzerland"
+                placeholder="Google"
               />
             </Field>
-            <Field label="level" className="w-32">
-              <select
-                value={draft.level ?? ""}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    level: (e.target.value || null) as ManualPostingBody["level"],
-                  })
-                }
+
+            <Field label="title" required>
+              <input
+                value={draft.title}
+                onChange={(e) => setDraft({ ...draft, title: e.target.value })}
                 className={INPUT}
-              >
-                <option value="">from title</option>
-                <option value="intern">intern</option>
-                <option value="newgrad">newgrad</option>
-                <option value="unknown">unknown</option>
-              </select>
+                placeholder="Software Engineering Intern, Summer 2027"
+              />
             </Field>
+
+            <Field label="url" required>
+              <input
+                value={draft.url}
+                onChange={(e) => setDraft({ ...draft, url: e.target.value })}
+                className={INPUT}
+                placeholder="https://www.linkedin.com/jobs/view/..."
+              />
+            </Field>
+
+            <div className="flex gap-3">
+              <Field label="location" className="flex-1">
+                <input
+                  value={draft.location ?? ""}
+                  onChange={(e) =>
+                    setDraft({ ...draft, location: e.target.value })
+                  }
+                  className={INPUT}
+                  placeholder="Zurich, Switzerland"
+                />
+              </Field>
+              <Field label="level" className="w-32">
+                <select
+                  value={draft.level ?? ""}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      level: (e.target.value ||
+                        null) as ManualPostingBody["level"],
+                    })
+                  }
+                  className={INPUT}
+                >
+                  <option value="">from title</option>
+                  <option value="intern">intern</option>
+                  <option value="newgrad">newgrad</option>
+                  <option value="unknown">unknown</option>
+                </select>
+              </Field>
+            </div>
+
+            {/* The description is what gets chunked and embedded, so a posting
+              pasted without one is trackable but never findable by search at
+              all. Worth saying here rather than letting it be discovered. */}
+            <Field label="description">
+              <textarea
+                value={draft.body ?? ""}
+                onChange={(e) => setDraft({ ...draft, body: e.target.value })}
+                rows={6}
+                className={`${INPUT} resize-y font-sans leading-relaxed`}
+                placeholder="Paste the posting text. This is what search reads — without it the posting is tracked but never findable."
+              />
+            </Field>
+
+            {create.error && (
+              <p className="text-xs text-status-rejected">
+                {create.error instanceof ApiError
+                  ? create.error.detail
+                  : String(create.error)}
+              </p>
+            )}
           </div>
 
-          {/* The description is what gets chunked and embedded, so a posting
-              pasted without one is trackable but not findable by search. Worth
-              saying here rather than letting it be discovered later. */}
-          <Field label="description">
-            <textarea
-              value={draft.body ?? ""}
-              onChange={(e) => setDraft({ ...draft, body: e.target.value })}
-              rows={7}
-              className={`${INPUT} resize-y font-sans leading-relaxed`}
-              placeholder="Paste the posting text. This is what search reads — without it the posting is tracked but not findable."
-            />
-          </Field>
-
-          {create.error && (
-            <p className="text-xs text-status-rejected">
-              {create.error instanceof ApiError
-                ? create.error.detail
-                : String(create.error)}
-            </p>
-          )}
-
-          <div className="flex items-center justify-between border-t border-hairline pt-3">
+          <div className="flex shrink-0 items-center justify-between border-t border-hairline px-4 py-3">
+            {/* Both halves of search need a step this dialog cannot do. The
+                dense side needs a vector; the keyword side reads a prebuilt
+                index that a fresh chunk is not in. `cli embed` does both, so
+                that is the honest instruction rather than "searchable now". */}
             <span className="font-mono text-2xs text-text-faint">
-              searchable by keyword now, by meaning after the next embed
+              tracked at once · findable after{" "}
+              <span className="text-text-muted">cli embed</span>
             </span>
             <div className="flex gap-2">
               <button

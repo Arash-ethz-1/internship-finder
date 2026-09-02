@@ -20,6 +20,7 @@ from typing import Any
 from ..db import STATUSES, TRACKED_STATUSES, Posting, now_iso
 from ..runtime import get_db
 from . import retrieval
+from .locations import REGIONS
 from .retrieval import SearchFilters
 
 TODO_DESCRIPTION = "TODO: author writes this"
@@ -61,6 +62,14 @@ def find_postings(
     query: str,
     filters: dict[str, Any] | None = None,
     limit: int = DEFAULT_FIND_LIMIT,
+    *,
+    company: str | None = None,
+    level: str | None = None,
+    location: str | None = None,
+    country: str | None = None,
+    region: str | None = None,
+    remote: bool | None = None,
+    posted_after: str | None = None,
 ) -> list[dict[str, Any]]:
     """Build a working list of postings for the person to act on.
 
@@ -89,7 +98,29 @@ def find_postings(
     person still decides whether it becomes ``interested``.
     """
     limit = max(1, min(int(limit), 100))
-    parsed = SearchFilters.from_dict({**(filters or {}), "kind": "posting", "status": "undecided"})
+    # Filters arrive as flat keyword arguments rather than a nested object.
+    # The schema used to ask the model for `{"query": ..., "filters": {...}}`,
+    # and a nested object is one more pair of braces to close correctly in a
+    # single streamed token sequence -- which it regularly failed to do,
+    # recovering only on the retry. `filters` stays accepted so callers inside
+    # this codebase (and the tests) can still pass a dict.
+    flat = {
+        "company": company,
+        "level": level,
+        "location": location,
+        "country": country,
+        "region": region,
+        "remote": remote,
+        "posted_after": posted_after,
+    }
+    parsed = SearchFilters.from_dict(
+        {
+            **(filters or {}),
+            **{k: v for k, v in flat.items() if v is not None},
+            "kind": "posting",
+            "status": "undecided",
+        }
+    )
     hits = retrieval.search(query, parsed, k=limit * FIND_OVERSAMPLE)
 
     # Collapse chunks onto their posting, keeping each posting's best rank.
@@ -319,7 +350,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "change the status of. Use this whenever they are asking to be shown jobs "
             "rather than asking a question about jobs — 'find me ML research internships "
             "in Zurich', 'show me quant roles'. This is the only way to search; there is "
-            "no other. Postings already in the pipeline are excluded "
+            "no other. Postings the board has taken down are never returned. "
+            "Postings already in the pipeline are excluded "
             "automatically, so a second search never returns the same posting twice, and "
             "everything returned is remembered. Do not list the results back in prose: "
             "the person is already looking at them. Say how many came back and what they "
@@ -327,32 +359,63 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         ),
         "input_schema": {
             "type": "object",
+            # Every filter is a top-level property rather than a nested
+            # `filters` object. The nested form asked the model to close a
+            # second pair of braces inside one streamed tool call, which it
+            # got wrong often enough to need a retry almost every time.
             "properties": {
                 "query": {
                     "type": "string",
                     "description": (
                         "What to look for, in natural language, phrased the way a posting "
                         "would be written ('machine learning research internship, PyTorch') "
-                        "rather than as a command. Put company, city, level and remote in "
-                        "filters instead of here."
+                        "rather than as a command. Keep place, company and level out of "
+                        "this — they have their own arguments below, and repeating them "
+                        "here only dilutes the ranking."
                     ),
                 },
-                "filters": {
-                    "type": "object",
+                "region": {
+                    "type": "string",
+                    "enum": list(REGIONS),
                     "description": (
-                        "Hard constraints applied before scoring. Exact matches, so use "
-                        "only what the person actually asked for. Note that location is a "
-                        "substring of what the board wrote, so a city works and a continent "
-                        "does not — for 'in Europe', leave location empty and say it in "
-                        "the query instead."
+                        "Continent-scale place. This is how you ask for 'in Europe' or "
+                        "'in North America'. It matches a normalised place rather than "
+                        "the board's own wording, so it works regardless of how the "
+                        "posting spelled the city."
                     ),
-                    "properties": {
-                        "company": {"type": "string"},
-                        "level": {"type": "string", "enum": ["intern", "newgrad", "unknown"]},
-                        "location": {"type": "string"},
-                        "remote": {"type": "boolean"},
-                        "posted_after": {"type": "string"},
-                    },
+                },
+                "country": {
+                    "type": "string",
+                    "description": (
+                        "ISO 3166-1 alpha-2 country code — CH for Switzerland, DE for "
+                        "Germany, GB for the United Kingdom, US for the United States. "
+                        "Use this for 'in Switzerland' rather than putting the country "
+                        "in location."
+                    ),
+                },
+                "location": {
+                    "type": "string",
+                    "description": (
+                        "A city, matched as a substring of what the board wrote. Use it "
+                        "only for a specific city ('Zurich'); for anything larger use "
+                        "country or region, which are exact."
+                    ),
+                },
+                "company": {"type": "string", "description": "Exact company name."},
+                "level": {
+                    "type": "string",
+                    "enum": ["intern", "newgrad", "unknown"],
+                    "description": (
+                        "Ask for 'intern' whenever the person is looking for an "
+                        "internship. Most postings are labelled from their title, and "
+                        "'unknown' means the heuristic could not tell rather than that "
+                        "the role is senior."
+                    ),
+                },
+                "remote": {"type": "boolean", "description": "Remote roles only."},
+                "posted_after": {
+                    "type": "string",
+                    "description": "UTC ISO-8601 date. Only postings published since then.",
                 },
                 "limit": {
                     "type": "integer",

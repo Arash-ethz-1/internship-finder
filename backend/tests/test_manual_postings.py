@@ -90,42 +90,77 @@ def test_ingest_can_never_close_it(conn: sqlite3.Connection) -> None:
     assert get_posting(conn, posting.id).closed_at is None  # type: ignore[union-attr]
 
 
-def test_editing_replaces_the_chunks_when_the_body_changes(conn: sqlite3.Connection) -> None:
+def _chunk_texts(conn: sqlite3.Connection, posting_id: str) -> list[str]:
+    return [
+        row[0]
+        for row in conn.execute(
+            "SELECT text FROM chunks WHERE posting_id = ? ORDER BY ordinal", (posting_id,)
+        )
+    ]
+
+
+def test_creating_chunks_immediately(conn: sqlite3.Connection) -> None:
+    """Chunking is local and free, so it happens on create rather than waiting
+    for the next `cli embed`.
+
+    It is also what makes the posting reachable at all: `embed_all_pending`
+    looks for chunks without a vector, so a posting with no chunks is a posting
+    nothing will ever pick up.
+    """
+    posting = create(conn, DRAFT)
+    texts = _chunk_texts(conn, posting.id)
+
+    assert texts, "a manual posting with a body should have chunks"
+    assert any("robot perception" in t for t in texts)
+    # Not embedded, though. That is the step that costs.
+    assert (
+        conn.execute(
+            "SELECT count(*) FROM chunks WHERE posting_id = ? AND vector_row IS NOT NULL",
+            (posting.id,),
+        ).fetchone()[0]
+        == 0
+    )
+
+
+def test_editing_rebuilds_the_chunks_when_the_body_changes(conn: sqlite3.Connection) -> None:
     """Old chunks describe text that no longer exists.
 
     Leaving them means searching a posting that is not there any more, which is
-    the same failure `upsert_postings` drops chunks to avoid for boards.
+    the failure `upsert_postings` drops a board posting's chunks to avoid. The
+    difference here is that they are rebuilt in the same breath rather than
+    left for `cli embed`, so the edited text is chunked from the moment it is
+    saved.
     """
     posting = create(conn, DRAFT)
-    conn.execute(
-        "INSERT INTO chunks (posting_id, ordinal, text) VALUES (?, 0, 'old text')",
-        (posting.id,),
-    )
     conn.commit()
 
-    update(conn, posting.id, ManualPosting(**{**DRAFT.__dict__, "body": "Completely new text."}))
-    assert (
-        conn.execute("SELECT count(*) FROM chunks WHERE posting_id = ?", (posting.id,)).fetchone()[
-            0
-        ]
-        == 0
+    update(
+        conn,
+        posting.id,
+        ManualPosting(**{**DRAFT.__dict__, "body": "Completely different work on compilers."}),
     )
+
+    texts = _chunk_texts(conn, posting.id)
+    assert any("compilers" in t for t in texts)
+    assert not any("robot perception" in t for t in texts)
 
 
 def test_editing_keeps_the_chunks_when_only_the_title_changes(conn: sqlite3.Connection) -> None:
     """Re-embedding is the expensive step, so it is not paid for a typo fix."""
     posting = create(conn, DRAFT)
-    conn.execute(
-        "INSERT INTO chunks (posting_id, ordinal, text) VALUES (?, 0, 'kept')", (posting.id,)
-    )
+    conn.execute("UPDATE chunks SET vector_row = 999 WHERE posting_id = ?", (posting.id,))
     conn.commit()
 
     update(conn, posting.id, ManualPosting(**{**DRAFT.__dict__, "title": "Praktikum ML (m/w/d)"}))
+
+    # The vectors survive, which is the point: rebuilding the chunks here would
+    # throw away embeddings that are still correct for unchanged text.
     assert (
-        conn.execute("SELECT count(*) FROM chunks WHERE posting_id = ?", (posting.id,)).fetchone()[
-            0
-        ]
-        == 1
+        conn.execute(
+            "SELECT count(*) FROM chunks WHERE posting_id = ? AND vector_row IS NOT NULL",
+            (posting.id,),
+        ).fetchone()[0]
+        > 0
     )
 
 

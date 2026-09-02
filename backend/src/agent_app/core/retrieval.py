@@ -26,6 +26,7 @@ import numpy as np
 
 from .. import runtime
 from ..db import LEVELS, STATUSES
+from .locations import COUNTRIES, REGIONS
 
 NOT_IMPLEMENTED = "Category B — author writes this by hand"
 
@@ -79,11 +80,20 @@ class SearchFilters:
     kind: str = "posting"  # posting | profile | any
     company: str | None = None
     level: str | None = None  # intern | newgrad | unknown
-    location: str | None = None  # substring match
+    location: str | None = None  # substring match on the board's own words
     remote: bool | None = None
     status: str | None = None  # an applications.status, or "untriaged"
     posted_after: str | None = None  # UTC ISO-8601
     posting_ids: tuple[str, ...] = ()  # restrict to specific postings
+    # Normalised place, from `posting_locations`. Unlike `location`, these mean
+    # the same thing however the board spelled it, and `region` is the only way
+    # to ask for somewhere larger than a city. Matching is "any of a posting's
+    # places", because a Zurich-and-London posting is in Europe once.
+    country: str | None = None  # ISO 3166-1 alpha-2, e.g. "CH"
+    region: str | None = None  # europe | north_america | ...
+    # A posting the board has taken down cannot be applied to, so search does
+    # not offer it. Set True only to look something up deliberately.
+    include_closed: bool = False
 
     KINDS = ("posting", "profile", "any")
 
@@ -94,6 +104,10 @@ class SearchFilters:
             raise ValueError(f"level must be one of {LEVELS}, got {self.level!r}")
         if self.status is not None and self.status not in (*STATUSES, *PSEUDO_STATUSES):
             raise ValueError(f"unknown status {self.status!r}")
+        if self.region is not None and self.region not in REGIONS:
+            raise ValueError(f"region must be one of {REGIONS}, got {self.region!r}")
+        if self.country is not None and self.country.upper() not in COUNTRIES:
+            raise ValueError(f"unknown country code {self.country!r}")
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> SearchFilters:
@@ -204,6 +218,20 @@ def candidate_sql(filters: SearchFilters, *, with_text: bool = True) -> tuple[st
     if filters.posted_after:
         where.append("p.posted_at >= ?")
         params.append(filters.posted_after)
+    if filters.country:
+        where.append(
+            "EXISTS (SELECT 1 FROM posting_locations l WHERE l.posting_id = p.id AND l.country = ?)"
+        )
+        params.append(filters.country.upper())
+    if filters.region:
+        where.append(
+            "EXISTS (SELECT 1 FROM posting_locations l WHERE l.posting_id = p.id AND l.region = ?)"
+        )
+        params.append(filters.region)
+    if not filters.include_closed and filters.kind != "profile":
+        # A profile chunk has no posting, so this clause would exclude every
+        # one of them; the letter drafter searches with kind="profile".
+        where.append("(c.posting_id IS NULL OR p.closed_at IS NULL)")
     if filters.posting_ids:
         marks = ",".join("?" * len(filters.posting_ids))
         where.append(f"c.posting_id IN ({marks})")
