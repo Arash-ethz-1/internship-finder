@@ -150,11 +150,30 @@ class Candidate:
     vector_row: int | None
 
 
-def candidate_sql(filters: SearchFilters) -> tuple[str, list[Any]]:
+@dataclass(frozen=True)
+class CandidateKey:
+    """A candidate with everything except its text.
+
+    Scoring never reads the text — the dense side works off ``vector_row`` and
+    the keyword side off the precomputed index — and pulling 135 MB out of
+    SQLite to then use ten rows of it was two seconds of every search.
+    """
+
+    chunk_id: int
+    posting_id: str | None
+    profile_doc: str | None
+    ordinal: int
+    vector_row: int | None
+
+
+def candidate_sql(filters: SearchFilters, *, with_text: bool = True) -> tuple[str, list[Any]]:
     """Build the SQL that narrows chunks down to what the filters allow.
 
     Category A. Split out from :func:`search` so the filtering is testable on
     its own and so the Category B work is purely about scoring.
+
+    ``with_text=False`` selects the same rows without the one column that
+    dominates the transfer.
     """
     where: list[str] = []
     params: list[Any] = []
@@ -189,8 +208,12 @@ def candidate_sql(filters: SearchFilters) -> tuple[str, list[Any]]:
         where.append("a.status = ?")
         params.append(filters.status)
 
+    columns = "c.id, c.posting_id, c.profile_doc, c.ordinal, c.vector_row"
+    if with_text:
+        columns += ", c.text"
+
     sql = (
-        "SELECT c.id, c.posting_id, c.profile_doc, c.ordinal, c.text, c.vector_row "
+        f"SELECT {columns} "
         "FROM chunks c "
         "LEFT JOIN postings p ON p.id = c.posting_id "
         "LEFT JOIN applications a ON a.posting_id = c.posting_id"
@@ -214,6 +237,34 @@ def load_candidates(conn: sqlite3.Connection, filters: SearchFilters) -> list[Ca
         )
         for row in conn.execute(sql, params)
     ]
+
+
+def load_candidate_keys(conn: sqlite3.Connection, filters: SearchFilters) -> list[CandidateKey]:
+    """Fetch every chunk the filters allow, without its text. Category A."""
+    sql, params = candidate_sql(filters, with_text=False)
+    return [
+        CandidateKey(
+            chunk_id=row["id"],
+            posting_id=row["posting_id"],
+            profile_doc=row["profile_doc"],
+            ordinal=row["ordinal"],
+            vector_row=row["vector_row"],
+        )
+        for row in conn.execute(sql, params)
+    ]
+
+
+def load_texts(conn: sqlite3.Connection, chunk_ids: list[int]) -> dict[int, str]:
+    """The text of a handful of chunks, by id. Category A.
+
+    Only ever called with the k rows that are about to be returned, so the
+    ``IN`` clause stays far away from SQLite's parameter limit.
+    """
+    if not chunk_ids:
+        return {}
+    marks = ",".join("?" * len(chunk_ids))
+    rows = conn.execute(f"SELECT id, text FROM chunks WHERE id IN ({marks})", chunk_ids)
+    return {int(row["id"]): row["text"] for row in rows}
 
 
 # --- Category B ------------------------------------------------------------
@@ -330,12 +381,13 @@ def search(query: str, filters: SearchFilters, k: int = 10) -> list[SearchHit]:
 
     The orchestration this is expected to do:
 
-    1. ``conn = get_db()``; ``candidates = load_candidates(conn, filters)``
+    1. ``conn = get_db()``; ``candidates = load_candidate_keys(conn, filters)``
        (both Category A and ready to use)
     2. embed ``query`` with ``runtime.get_provider()``
     3. :func:`dense_scores` over the candidates' rows of
        ``runtime.get_vectors()``
-    4. :func:`bm25_scores` over ``[tokenize(c.text) for c in candidates]``
+    4. the keyword half from ``runtime.get_bm25_index()``, which computes
+       :func:`bm25_scores`' formula against a precomputed inverted index
     5. :func:`fuse` the two
     6. take the top ``k`` and build :class:`SearchHit` objects, filling
        ``component_scores`` with ``{COMPONENT_DENSE: …, COMPONENT_BM25: …}``
@@ -352,7 +404,7 @@ def search(query: str, filters: SearchFilters, k: int = 10) -> list[SearchHit]:
     Category B, written by Claude at the author's request on 2026-08-31.
     """
     conn = runtime.get_db()
-    candidates = load_candidates(conn, filters)
+    candidates = load_candidate_keys(conn, filters)
     if not candidates:
         return []
 
@@ -363,7 +415,9 @@ def search(query: str, filters: SearchFilters, k: int = 10) -> list[SearchHit]:
     dense = np.zeros(len(candidates), dtype=np.float64)
     if embedded.any():
         dense[embedded] = dense_scores(query_vec, matrix[rows[embedded]])
-    keyword = bm25_scores(query, [tokenize(c.text) for c in candidates])
+    # The same arithmetic as bm25_scores, over an index built once instead of
+    # per query. tests/test_bm25_index.py holds the two to the same numbers.
+    keyword = runtime.get_bm25_index().scores(query, [c.chunk_id for c in candidates])
 
     # Equivalent to fuse([dense, keyword]), kept as halves because
     # component_scores has to show what each retriever contributed.
@@ -374,13 +428,16 @@ def search(query: str, filters: SearchFilters, k: int = 10) -> list[SearchHit]:
     fused = parts[COMPONENT_DENSE] + parts[COMPONENT_BM25]
 
     top = np.argsort(-fused, kind="stable")[:k]
+    # Text is fetched for the k rows that survived, not the 135,000 that were
+    # scored. Nothing above this line needs it.
+    texts = load_texts(conn, [candidates[i].chunk_id for i in top])
     return [
         SearchHit(
             chunk_id=candidates[i].chunk_id,
             posting_id=candidates[i].posting_id,
             profile_doc=candidates[i].profile_doc,
             ordinal=candidates[i].ordinal,
-            text=candidates[i].text,
+            text=texts.get(candidates[i].chunk_id, ""),
             score=float(fused[i]),
             rank=rank,
             component_scores={name: float(part[i]) for name, part in parts.items()},

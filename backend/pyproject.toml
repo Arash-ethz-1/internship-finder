@@ -16,6 +16,7 @@ dependencies = [
     # API layer.
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
+    "fastembed>=0.8.0",
 ]
 
 [project.optional-dependencies]

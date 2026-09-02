@@ -21,8 +21,21 @@ def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
     """Point settings at ``tmp_path`` and clear cached state around each test."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("PROFILE_DIR", str(tmp_path / "profile"))
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
+    # Emptied, not deleted. ``load_settings`` calls ``load_dotenv`` on every
+    # call, so a deleted variable is put straight back from the developer's own
+    # backend/.env; an empty one is left alone, and config reads "" as unset.
+    # Without this a machine that has real keys, or a different provider, runs
+    # a different test suite from CI.
+    for name in (
+        "ANTHROPIC_API_KEY",
+        "VOYAGE_API_KEY",
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "EMBEDDING_PROVIDER",
+        "EMBEDDING_MODEL",
+        "EMBEDDING_DIM",
+    ):
+        monkeypatch.setenv(name, "")
     reset_settings()
     runtime.reset()
     yield

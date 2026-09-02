@@ -10,8 +10,8 @@ import sqlite3
 
 import pytest
 
-from agent_app import cli
-from agent_app.config import Settings
+from agent_app import cli, runtime
+from agent_app.config import Settings, reset_settings
 from agent_app.ingest.profile import (
     SKIP,
     ProfileReport,
@@ -168,10 +168,19 @@ def test_cli_ingest_profile_explains_an_empty_folder(
 
 
 def test_cli_ingest_profile_chunks_then_stops_without_an_api_key(
-    conn: sqlite3.Connection, settings: Settings, capsys: pytest.CaptureFixture[str]
+    conn: sqlite3.Connection,
+    settings: Settings,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Chunking is local and free; embedding is neither. The write-up is
-    # chunked and stored, and only the embedding step reports why it stopped.
+    # Chunking is local and free; embedding through a paid provider is neither.
+    # The write-up is chunked and stored, and only the embedding step reports
+    # why it stopped. Pinned to Voyage on purpose: under the default local
+    # provider there is no key to be missing, and the test would download a
+    # model instead of asserting anything.
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "voyage")
+    reset_settings()
+    runtime.reset()
     write_doc(settings, "real.md")
 
     assert cli.main(["ingest-profile"]) == 2

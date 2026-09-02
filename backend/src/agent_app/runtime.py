@@ -34,6 +34,7 @@ from .db import connect, init_db
 if TYPE_CHECKING:  # pragma: no cover - import cycle at runtime, fine for types
     import numpy as np
 
+    from .core.bm25_index import Bm25Index
     from .core.embeddings import EmbeddingProvider
 
 _local = threading.local()
@@ -42,6 +43,7 @@ _local = threading.local()
 # is read-only once loaded, so sharing them across request threads is safe.
 _provider: EmbeddingProvider | None = None
 _vectors: np.ndarray | None = None
+_bm25: Bm25Index | None = None
 
 
 def get_db() -> sqlite3.Connection:
@@ -97,9 +99,31 @@ def reset_vectors() -> None:
     _vectors = None
 
 
+def get_bm25_index() -> Bm25Index:
+    """Return the inverted index BM25 scores against, loading it on first use.
+
+    Read from ``data/bm25.npz`` when it still describes the chunks table, and
+    rebuilt from the corpus when it does not. Rebuilding tokenises everything,
+    so it is slow and rare; loading is a handful of numpy arrays off disk.
+    """
+    global _bm25
+    if _bm25 is None:
+        from .core.bm25_index import get_or_build
+
+        _bm25 = get_or_build(get_db(), get_settings())
+    return _bm25
+
+
+def reset_bm25_index() -> None:
+    """Drop the cached index. Anything that changes the chunks table calls this."""
+    global _bm25
+    _bm25 = None
+
+
 def reset() -> None:
     """Drop every cached resource. Tests use this between databases."""
     global _provider
     close_db()
     reset_vectors()
+    reset_bm25_index()
     _provider = None

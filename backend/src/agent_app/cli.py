@@ -19,11 +19,12 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sqlite3
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from .config import ConfigError, get_settings
+from .config import ConfigError, Settings, get_settings
 from .db import SOURCES, stats, table_names
 from .ingest import (
     Candidate,
@@ -40,7 +41,7 @@ from .ingest import (
     run_ingest,
     seed_from_toml,
 )
-from .runtime import close_db, get_db, reset_vectors
+from .runtime import close_db, get_db, reset_bm25_index, reset_vectors
 
 
 def cmd_init_db(_args: argparse.Namespace) -> int:
@@ -210,8 +211,19 @@ def cmd_ingest_profile(_args: argparse.Namespace) -> int:
 
 
 def cmd_embed(args: argparse.Namespace) -> int:
-    """Embed every chunk that does not have a vector yet."""
-    from .core.embeddings import EmbeddingError, embed_all_pending, rebuild_vectors
+    """Embed every chunk that does not have a vector yet.
+
+    ``--export`` and ``--import`` split that in half so the embedding can run
+    on a machine with more compute than a laptop. Both chunk first, so an
+    export is never a snapshot of a stale corpus.
+    """
+    from .core.embeddings import (
+        EmbeddingError,
+        embed_all_pending,
+        export_pending,
+        import_vectors,
+        rebuild_vectors,
+    )
 
     settings = get_settings()
     conn = get_db()
@@ -223,13 +235,35 @@ def cmd_embed(args: argparse.Namespace) -> int:
     if chunked.pending:
         print(chunked.format())
 
+    if args.export is not None:
+        report = export_pending(conn, args.export, settings, limit=args.limit)
+        print(report.format())
+        return 0
+
+    if args.import_ is not None:
+        try:
+            taken = import_vectors(conn, args.import_, settings)
+        except (EmbeddingError, OSError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        reset_vectors()
+        print(taken.format())
+        _build_bm25_index(conn, settings)
+        return 0
+
+    def show(done: int, total: int) -> None:
+        """Overwrite one line with the count. A local run takes minutes."""
+        end = "\n" if done >= total else ""
+        print(f"\r  embedded {done:,}/{total:,}", end=end, flush=True)
+
     try:
         if args.compact:
             before, after = rebuild_vectors(conn, settings)
             print(f"compacted vectors.npy: {before:,} -> {after:,} row(s)")
             reset_vectors()
 
-        report = embed_all_pending(conn, settings=settings)
+        print(f"provider: {settings.embedding_provider} · {settings.embedding_model}")
+        report = embed_all_pending(conn, settings=settings, progress=show)
     except ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -245,7 +279,24 @@ def cmd_embed(args: argparse.Namespace) -> int:
         print("")
         print("The chunks table is empty, so there was nothing to embed.")
         print("There are no postings to chunk either — run `cli ingest` first.")
+        return 0
+
+    _build_bm25_index(conn, settings)
     return 0
+
+
+def _build_bm25_index(conn: sqlite3.Connection, settings: Settings) -> None:
+    """Bring the keyword index up to date, here rather than at the first search.
+
+    Without this the cost lands on whoever runs the next query, which on a full
+    corpus is a minute of a dashboard looking broken. It is a no-op when the
+    index already describes the chunks table.
+    """
+    from .core.bm25_index import get_or_build
+
+    index = get_or_build(conn, settings)
+    reset_bm25_index()
+    print(f"keyword index: {index.n_docs:,} chunk(s), {len(index.terms):,} term(s)")
 
 
 def cmd_status(_args: argparse.Namespace) -> int:
@@ -558,13 +609,34 @@ def build_parser() -> argparse.ArgumentParser:
             "Find chunks with no vector_row, embed them in batches, append to "
             "data/vectors.npy and write the row indices back. Safe to re-run: "
             "already-embedded chunks are skipped and repeated text is served "
-            "from the on-disk cache."
+            "from the on-disk cache. With --export and --import the embedding "
+            "itself happens on another machine; see cluster/README.md."
         ),
     )
     p_embed.add_argument(
         "--compact",
         action="store_true",
         help="first rebuild vectors.npy, dropping rows no chunk references any more",
+    )
+    elsewhere = p_embed.add_mutually_exclusive_group()
+    elsewhere.add_argument(
+        "--export",
+        type=Path,
+        metavar="FILE.jsonl",
+        help="write the pending chunks to a file to embed on another machine, and stop",
+    )
+    p_embed.add_argument(
+        "--limit",
+        type=int,
+        metavar="N",
+        help="with --export, write only the first N pending chunks (a dry run of the round trip)",
+    )
+    elsewhere.add_argument(
+        "--import",
+        dest="import_",
+        type=Path,
+        metavar="FILE.npz",
+        help="take in vectors embedded on another machine (see cluster/README.md)",
     )
     p_embed.set_defaults(func=cmd_embed)
 

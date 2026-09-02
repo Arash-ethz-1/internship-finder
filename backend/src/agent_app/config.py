@@ -29,8 +29,18 @@ DEFAULT_DISCOVERY_MODEL = "claude-sonnet-5"
 # Classifying a subject line into four buckets is the cheapest judgement call
 # in the app, and it runs once per candidate email.
 DEFAULT_CLASSIFIER_MODEL = "claude-sonnet-5"
-DEFAULT_EMBEDDING_MODEL = "voyage-3.5"
-DEFAULT_EMBEDDING_DIM = 1024
+# Which embedding backend to build. "local" runs a model on this machine and
+# needs no key at all, which is why it is the default: a fresh clone can embed
+# the whole corpus without signing up for anything.
+DEFAULT_EMBEDDING_PROVIDER = "local"
+
+# A provider is useless without a model and a dimension, and the right pair
+# differs per provider. Choosing a provider therefore chooses both, unless
+# EMBEDDING_MODEL / EMBEDDING_DIM say otherwise.
+PROVIDER_DEFAULTS: dict[str, tuple[str, int]] = {
+    "local": ("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2", 384),
+    "voyage": ("voyage-3.5", 1024),
+}
 
 
 class ConfigError(RuntimeError):
@@ -49,6 +59,7 @@ class Settings:
     vectors_path: Path
     vectors_meta_path: Path
     embed_cache_dir: Path
+    bm25_index_path: Path
     letters_dir: Path
     eval_dir: Path
     companies_path: Path
@@ -62,6 +73,7 @@ class Settings:
     agent_model: str
     discovery_model: str
     classifier_model: str
+    embedding_provider: str
     embedding_model: str
     embedding_dim: int
 
@@ -127,8 +139,16 @@ def load_settings() -> Settings:
     data_dir = Path(os.getenv("DATA_DIR") or PROJECT_ROOT / "data").resolve()
     profile_dir = Path(os.getenv("PROFILE_DIR") or PROJECT_ROOT / "profile").resolve()
 
-    raw_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+    raw_origins = os.getenv("CORS_ORIGINS") or "http://localhost:5173,http://127.0.0.1:5173"
     origins = tuple(o.strip() for o in raw_origins.split(",") if o.strip())
+
+    provider = (os.getenv("EMBEDDING_PROVIDER") or DEFAULT_EMBEDDING_PROVIDER).strip().lower()
+    if provider not in PROVIDER_DEFAULTS:
+        raise ConfigError(
+            f"EMBEDDING_PROVIDER={provider!r} is not one of "
+            f"{', '.join(sorted(PROVIDER_DEFAULTS))}. Fix it in {BACKEND_DIR / '.env'}."
+        )
+    default_model, default_dim = PROVIDER_DEFAULTS[provider]
 
     return Settings(
         project_root=PROJECT_ROOT,
@@ -141,6 +161,9 @@ def load_settings() -> Settings:
         # embedding providers fails loudly instead of silently mixing spaces.
         vectors_meta_path=data_dir / "vectors.meta.json",
         embed_cache_dir=data_dir / "embed_cache",
+        # The inverted index BM25 scores against. Derived from the chunks
+        # table and rebuilt when it no longer matches, so it is cache, not data.
+        bm25_index_path=data_dir / "bm25.npz",
         letters_dir=data_dir / "letters",
         eval_dir=data_dir / "eval",
         companies_path=BACKEND_DIR / "companies.toml",
@@ -150,13 +173,14 @@ def load_settings() -> Settings:
         voyage_api_key=os.getenv("VOYAGE_API_KEY") or None,
         google_client_id=os.getenv("GOOGLE_CLIENT_ID") or None,
         google_client_secret=os.getenv("GOOGLE_CLIENT_SECRET") or None,
-        agent_model=os.getenv("AGENT_MODEL", DEFAULT_AGENT_MODEL),
-        discovery_model=os.getenv("DISCOVERY_MODEL", DEFAULT_DISCOVERY_MODEL),
-        classifier_model=os.getenv("CLASSIFIER_MODEL", DEFAULT_CLASSIFIER_MODEL),
-        embedding_model=os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
-        embedding_dim=int(os.getenv("EMBEDDING_DIM", str(DEFAULT_EMBEDDING_DIM))),
-        api_host=os.getenv("API_HOST", "127.0.0.1"),
-        api_port=int(os.getenv("API_PORT", "8000")),
+        agent_model=os.getenv("AGENT_MODEL") or DEFAULT_AGENT_MODEL,
+        discovery_model=os.getenv("DISCOVERY_MODEL") or DEFAULT_DISCOVERY_MODEL,
+        classifier_model=os.getenv("CLASSIFIER_MODEL") or DEFAULT_CLASSIFIER_MODEL,
+        embedding_provider=provider,
+        embedding_model=os.getenv("EMBEDDING_MODEL") or default_model,
+        embedding_dim=int(os.getenv("EMBEDDING_DIM") or default_dim),
+        api_host=os.getenv("API_HOST") or "127.0.0.1",
+        api_port=int(os.getenv("API_PORT") or 8000),
         cors_origins=origins,
         user_agent=os.getenv(
             "USER_AGENT",

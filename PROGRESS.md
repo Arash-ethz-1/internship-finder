@@ -4,8 +4,9 @@ Running state of the project. `plan.md` is the spec (what we intend to build);
 this file is the log (what is actually built, what is next, and what we decided
 along the way that the spec does not say).
 
-**Last updated:** 2026-09-01, session 4. Phase 10 is built. Every phase in
-`plan.md` is now done.
+**Last updated:** 2026-09-02, session 5. Every phase in `plan.md` is done.
+Embeddings now run locally with no API key, and the bulk run is set up to
+happen on the TIK cluster.
 
 ---
 
@@ -26,6 +27,93 @@ before it went down). Retry when it is back:
 uv run python -m agent_app.cli discover --from crawl --source ashby --limit 40
 ```
 
+## Session 5, 2026-09-02: embeddings without a key, and off this machine
+
+**`EMBEDDING_PROVIDER=local` is the new default.** A small multilingual ONNX
+model runs through `fastembed`, so `cli embed` needs no key and re-embedding
+while tuning chunking costs nothing. `EMBEDDING_PROVIDER=voyage` still selects
+the API path, and choosing a provider now also chooses its model and dimension
+unless `EMBEDDING_MODEL` / `EMBEDDING_DIM` say otherwise.
+
+**Measured on this laptop (i5-1235U), and this is the number that decided the
+rest of the session:**
+
+| | |
+|---|---|
+| one query | **130 ms** — fine, this stays local |
+| documents | **1.7 chunks/s** |
+| the corpus, 135,871 chunks | **~22 hours** |
+
+So the bulk embedding goes to the cluster and the queries stay here.
+`cli embed --export` writes the pending chunks as JSONL, `cluster/embed_chunks.py`
+turns that into an `.npz` wherever the compute is, and `cli embed --import`
+appends the vectors and assigns `vector_row`. The database never leaves this
+machine and the repository never reaches the cluster; `embed_chunks.py` imports
+nothing from `agent_app` and needs only `fastembed` and `numpy`.
+`cluster/README.md` has the conda setup, the `sbatch` job and the etiquette
+notes; `cluster/job.sh` needs `TODO_USERNAME` replaced in three places.
+
+**Verified end to end on real data**, at 20 chunks: export -> `embed_chunks.py`
+-> import -> a hybrid search returning hits with both `dense` and `bm25`
+contributions. Re-importing the same file reported `0 imported, 20 already had
+a vector`. Those 20 vectors are still in `data/vectors.npy`; the next export
+picks up the remaining 135,851.
+
+**The corpus grew since session 4** and nobody wrote it down: **24,516
+postings from 575 companies, 135,871 chunks**, not the 5,149/34,008 recorded
+below. German is 0.3% of chunks, not the third that was assumed — though the
+German ones are `Praktikum` and `Werkstudent` postings, which is exactly what
+this search is for, so the model stayed multilingual.
+
+### Search: 26 s -> 2 s
+
+Measured before, per query, on 135,851 candidates:
+
+```
+load_candidates    2.0 s     every chunk's text out of SQLite
+tokenize          16.0 s     19.7 million tokens, again
+bm25_scores        7.8 s     135,851 Counters, again
+dense_scores       0.4 s
+query embedding    0.2 s
+```
+
+Only the last two lines depend on the query. `core/bm25_index.py` (Category A,
+new) precomputes the rest into a CSR inverted index in `data/bm25.npz` — 65,688
+terms over 135,871 chunks, 109 MB, loads in 0.4 s — and `search` now
+(a) loads candidates without their text, (b) scores the keyword half against
+the index, (c) fetches text for the k rows it is about to return.
+
+**`bm25_scores` is untouched and still the definition.** It is one of the
+author's exercises; the index only had to reproduce it.
+`tests/test_bm25_index.py` asserts bit-identical agreement across five queries,
+so if the author rewrites `bm25_scores`, that test is what says whether the
+fast path still matches.
+
+One deliberate behaviour change: IDF and average document length now come from
+the whole corpus rather than the filtered candidate set. That is the standard
+choice, and it stops the same query scoring differently because a company
+filter happens to be on. With no filters the two are identical, which is what
+the test pins.
+
+The index is built by `cli embed`, and rebuilt automatically when its chunk
+count or highest chunk id no longer matches the table.
+
+### Found on the way, not fixed
+
+- **`data/` lives inside OneDrive.** `vectors.npy` will be ~200 MB and the
+  embed cache is one file per vector. Setting `DATA_DIR` somewhere outside
+  OneDrive would save a lot of syncing. The cluster round trip sidesteps the
+  cache entirely, which is part of why it is the better path anyway.
+- **Query and document embeddings use the same prefix.** `search` calls
+  `provider.embed([query])`, and the Protocol has one method, so a provider
+  cannot tell a query from a document. Fine for the default model, which wants
+  no prefix at all; E5 models get the symmetric `"query: "` on both sides,
+  which their authors document but which is a little worse than the
+  asymmetric pair. Voyage has had the same wart all along — it sends
+  `input_type: "document"` for queries too. Fixing both properly is one extra
+  method on the Protocol and one changed line inside `search`. That line is
+  the author's.
+
 ## Resume here
 
 **Session 4, 2026-09-01: Phase 10 built, the last one.** Gmail sync, matching,
@@ -42,17 +130,12 @@ a re-run examined nothing twice. The `/inbox` page was served and the Vite
 proxy verified, but **it has not been looked at in a browser** — the Chrome
 extension would not connect. Worth eyeballing once.
 
-**Still blocked on the same thing as last session: there are no API keys.**
-`backend/.env` now lists all four variables and every value is still empty.
-Nothing downstream of retrieval has ever run against real data.
+**No embedding key is needed any more** — that was session 5's point.
+`ANTHROPIC_API_KEY` is set in `backend/.env`; the agent, letters and the email
+classifier use it.
 
-1. **`VOYAGE_API_KEY`** and **`ANTHROPIC_API_KEY`**, as before.
-   *Worth deciding before the first `cli embed`:* `voyage-3.5` has no free
-   allowance, but `voyage-4` is the same $0.06/M **and** carries 200M free
-   tokens, with the same default dimension of 1024. The corpus is ~7.9M tokens,
-   so the whole thing is free on `voyage-4` and about $0.55 on `voyage-3.5`.
-   Switching later forces a full re-embed; right now there are zero vectors, so
-   the switch is free. One line: `EMBEDDING_MODEL=voyage-4`.
+1. **`VOYAGE_API_KEY`** is now optional and only read when
+   `EMBEDDING_PROVIDER=voyage`. Superseded by the local provider.
 2. **`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`**, optional, for `sync-email`
    only. Google Cloud project -> enable the Gmail API -> OAuth client of type
    "Desktop app". Steps are in `.env.example`.
@@ -65,11 +148,17 @@ Then, in order:
 
 ```
 cd backend
-uv run python -m agent_app.cli embed     # 5,149 postings -> chunks -> vectors
+
+# Done on 2026-09-02. Repeat this after a big ingest; see cluster/README.md.
+# uv run python -m agent_app.cli embed --export ../data/pending.jsonl
+# ... sbatch job.sh pending.jsonl vectors.npz ...
+# uv run python -m agent_app.cli embed --import ../data/vectors.npz
+
 uv run python -m agent_app.cli ingest-profile
 uv run python -m agent_app.cli eval      # the first real retrieval number
 uv run python try_chunking.py --all      # chunking health over 200 postings
 ```
+
 
 **The author still intends to rewrite `run_agent` himself** — *"i will rewrite
 it tomorrow with fresh soul."* Treat `core/agent.py` as a placeholder, and do
@@ -91,7 +180,7 @@ suite is the regression test for anything rewritten.
 | 2 | Ingestion | Claude | ✅ done | `403a5c8` |
 | 3 | Core stubs (Category B signatures) | Claude | ✅ done | `49a8989` |
 | 3.5 | `chunk_posting`, `chunk_profile_doc` | Arash + Claude | ✅ done 2026-08-31 | |
-| 4 | Embeddings plumbing | Claude | ✅ done (end-to-end check needs an API key) | |
+| 4 | Embeddings plumbing | Claude | ✅ done; local provider + cluster round trip verified 2026-09-02 | |
 | 5 | Profile corpus | Claude | ✅ done; runs, needs write-ups in `profile/` | |
 | 6 | Letter drafting | Claude | ✅ done | |
 | 7 | API | Claude | ✅ done | |
@@ -135,6 +224,9 @@ conflict. Do not "fix" them back.
    meaningless on an empty chunks table.
 3. **Embeddings: Voyage AI** (`voyage-3.5`, dim 1024, `VOYAGE_API_KEY`).
    Anthropic has no embeddings endpoint, so this is a second vendor.
+   *Superseded 2026-09-02:* the default is now `EMBEDDING_PROVIDER=local`,
+   a `fastembed` ONNX model on this machine, needing no key. Voyage is still
+   built and still selectable; it is no longer the way in. See amendment 11.
 4. **Ambient state via `runtime.py`.** The Category B signatures take no
    database or provider, so `get_db()` (and later `get_provider()`,
    `get_vectors()`) are how they reach dependencies. Connections are
@@ -153,6 +245,19 @@ conflict. Do not "fix" them back.
    exercises in `backend/exercises/` stay as they are: they are now the
    regression tests for the author's own rewrites. Rule 1 of CLAUDE.md no
    longer has anything to protect unless the author re-stubs a function.
+11. **Bulk embedding runs off this machine** (decided 2026-09-02). The laptop
+    manages 1.7 chunks a second, or ~22 hours for the corpus, so `cli embed`
+    grew `--export` and `--import` and the work happens on the ETH TIK
+    cluster. Queries stay local at 130 ms. `plan.md`'s Phase 4 says "implement
+    one concrete provider"; there are now two, plus a transfer format, because
+    the check it asks for — `vectors.npy` with a row per chunk — is not
+    reachable in one sitting otherwise.
+
+    The same library runs on both ends on purpose. Tokenizer, pooling and
+    normalisation are as much a part of a vector as the weights are, so
+    reimplementing the pipeline with `sentence-transformers` on the cluster
+    would look fine and quietly rank worse.
+
 10. **Phase 10 uses the OAuth loopback flow, not the device flow** (decided
     2026-09-01). `plan.md` names "OAuth device flow". Google restricts that
     flow to a fixed scope list — `openid`, `email`, `profile`, two Drive
@@ -170,6 +275,17 @@ conflict. Do not "fix" them back.
 
 Small, deliberate, and worth knowing before someone "corrects" them.
 
+- **`backend/cluster/`** is not in `plan.md`'s layout, added 2026-09-02. It
+  holds `embed_chunks.py`, an `sbatch` script and a README, and it is the one
+  place in the repo that is meant to be copied somewhere else and run without
+  the rest. `embed_chunks.py` deliberately imports nothing from `agent_app`;
+  `tests/test_cluster_export.py` is what stops the two ends of the file format
+  drifting apart, including the prefix table they both keep.
+- **`core/bm25_index.py`** is not in `plan.md`'s file list, added 2026-09-02.
+  `plan.md` puts BM25 in `retrieval.py` and it is still there; this holds only
+  the corpus-derived tables that BM25 reads, which are cache rather than
+  retrieval logic. Keeping it out of `retrieval.py` also keeps the author's
+  Category B file free of a hundred lines of index plumbing.
 - **`ingest/chunks.py`** is a sixth module in that folder, added 2026-09-01.
   Nothing ever called `chunk_posting`: Phase 2 ends at "the body is stored",
   Phase 4 begins at "chunks without a vector_row get one", and the step between
@@ -234,22 +350,29 @@ python dev.py lint            # ruff + format + tsc + eslint
 cd backend
 uv run python -m agent_app.cli --help
 uv run python -m agent_app.cli ingest                    # fetch every board
+uv run python -m agent_app.cli embed --export ../data/pending.jsonl
+uv run python -m agent_app.cli embed --import ../data/vectors.npz
 uv run python -m agent_app.cli discover --from file --file names.txt
 uv run python -m agent_app.cli status                    # the pipeline
 uv run python -m agent_app.cli companies                 # what was verified
 uv run python -m agent_app.cli sync-email --login        # once, then without
 ```
 
-The dashboard at <http://localhost:5173> is real: `/postings` lists 5,149
+The dashboard at <http://localhost:5173> is real: `/postings` lists all 24,516
 postings with working filters, keyboard navigation and status changes that
 persist; `/stats` shows the pipeline; `/inbox` is the email review queue, with
 the pending count in the nav. `/chat` and `/letters/:id` work once the keys are
 in and the corpus is embedded.
 
-**Data as of the last ingest run:** 5,149 postings from 22 companies across all
-3 sources. 67 `intern`, 77 `newgrad`, 5,005 `unknown`. Chunked on 2026-09-01:
-**34,008 chunks**, 6.6 per posting, none embedded yet — `cli embed` still needs
-`VOYAGE_API_KEY`. **297 main tests and 68 exercise tests pass.**
+**Data as of 2026-09-02:** **24,516 postings from 575 companies** across all 3
+sources, **135,871 chunks**, 5.5 per posting, **all embedded**. The cluster run
+did 135,851 chunks in 1.8 minutes at 1,254/s on an RTX 2080 Ti — the same work
+the laptop wanted 22 hours for. **348 main tests and 69 exercise tests pass**;
+ruff clean. A search takes about 2 seconds.
+
+The 5,149-postings-from-22-companies figure recorded on 2026-09-01 was
+overtaken by a later ingest run that nobody logged. Anything quoting it is
+stale, including the phase-4 cost estimates.
 
 ---
 

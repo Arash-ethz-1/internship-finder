@@ -7,23 +7,30 @@ returns deterministic vectors.
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from pathlib import Path
 
 import httpx
 import numpy as np
 import pytest
 
 from agent_app import runtime
-from agent_app.config import Settings
+from agent_app.config import PROVIDER_DEFAULTS, ConfigError, Settings, reset_settings
 from agent_app.core.embeddings import (
     BATCH_SIZE,
+    LOCAL_MODEL_PREFIXES,
     EmbeddingCache,
     EmbeddingError,
     EmbedReport,
+    LocalProvider,
     VectorMeta,
     VoyageProvider,
+    build_provider,
     embed_all_pending,
     embed_texts,
+    export_pending,
+    import_vectors,
     load_vectors,
     rebuild_vectors,
     save_vectors,
@@ -400,8 +407,283 @@ def test_get_vectors_loads_and_caches(conn: sqlite3.Connection, settings: Settin
     assert runtime.get_vectors() is first
 
 
-def test_get_provider_needs_a_key(settings: Settings) -> None:
-    from agent_app.config import ConfigError
-
+def test_get_provider_needs_a_key_only_for_voyage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default provider is local, so this is about the paid path only."""
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "voyage")
+    reset_settings()
+    runtime.reset()
     with pytest.raises(ConfigError, match="VOYAGE_API_KEY"):
         runtime.get_provider()
+
+
+# --- choosing a provider ---------------------------------------------------
+
+
+class FakeEmbedder:
+    """Stands in for fastembed's TextEmbedding, and records what it saw."""
+
+    def __init__(self, dim: int = 384) -> None:
+        self.seen: list[str] = []
+        self.dim = dim
+
+    def embed(self, texts, batch_size: int = 0):  # noqa: ANN001, ANN202
+        for text in texts:
+            self.seen.append(text)
+            yield np.full(self.dim, 0.5, dtype=np.float32)
+
+
+def test_local_is_the_default_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A fresh clone with no keys at all must still be able to embed."""
+    reset_settings()
+    provider = build_provider()
+    assert isinstance(provider, LocalProvider)
+    assert (provider.model, provider.dim) == PROVIDER_DEFAULTS["local"]
+
+
+def test_voyage_is_chosen_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "voyage")
+    monkeypatch.setenv("VOYAGE_API_KEY", "k")
+    reset_settings()
+    provider = build_provider()
+    assert isinstance(provider, VoyageProvider)
+    assert (provider.model, provider.dim) == PROVIDER_DEFAULTS["voyage"]
+
+
+def test_voyage_without_a_key_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "voyage")
+    reset_settings()
+    with pytest.raises(ConfigError, match="VOYAGE_API_KEY"):
+        build_provider()
+
+
+def test_an_unknown_provider_is_rejected_at_load(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "openai")
+    reset_settings()
+    with pytest.raises(ConfigError, match="local, voyage"):
+        build_provider()
+
+
+# --- the local provider ----------------------------------------------------
+
+
+def test_local_embeds_nothing_without_loading_the_model() -> None:
+    """Importing and calling with no texts must not download 200 MB."""
+    provider = LocalProvider()
+    assert provider.embed([]).shape == (0, provider.dim)
+    assert provider._embedder is None
+
+
+def test_local_returns_one_row_per_text() -> None:
+    provider = LocalProvider(_embedder=FakeEmbedder())
+    assert provider.embed(["a", "b", "c"]).shape == (3, 384)
+
+
+def test_local_rejects_a_dimension_mismatch() -> None:
+    provider = LocalProvider(dim=1024, _embedder=FakeEmbedder(dim=384))
+    with pytest.raises(EmbeddingError, match="EMBEDDING_DIM=384"):
+        provider.embed(["a"])
+
+
+def test_local_prefixes_the_models_that_need_it() -> None:
+    model = next(iter(LOCAL_MODEL_PREFIXES))
+    embedder = FakeEmbedder(dim=1024)
+    LocalProvider(model=model, dim=1024, _embedder=embedder).embed(["cheese"])
+    assert embedder.seen == [LOCAL_MODEL_PREFIXES[model] + "cheese"]
+
+
+def test_local_leaves_other_models_alone() -> None:
+    embedder = FakeEmbedder()
+    LocalProvider(_embedder=embedder).embed(["cheese"])
+    assert embedder.seen == ["cheese"]
+
+
+def test_local_names_the_supported_models_when_the_name_is_wrong() -> None:
+    """Offline: fastembed rejects an unknown name from its own registry."""
+    with pytest.raises(EmbeddingError, match="no ONNX build"):
+        LocalProvider(model="intfloat/multilingual-e5-small").embed(["a"])
+
+
+# --- progress --------------------------------------------------------------
+
+
+def test_embed_all_pending_reports_progress(conn: sqlite3.Connection) -> None:
+    for i in range(5):
+        add_chunk(conn, f"chunk {i}")
+
+    seen: list[tuple[int, int]] = []
+    embed_all_pending(conn, FakeProvider(), batch_rows=2, progress=lambda d, t: seen.append((d, t)))
+    assert seen == [(2, 5), (4, 5), (5, 5)]
+
+
+# --- embedding on another machine ------------------------------------------
+
+
+def npz(path: Path, ids: list[int], vectors: np.ndarray, model: str, dim: int) -> Path:
+    """Stand in for the file cluster/embed_chunks.py writes."""
+    np.savez(path, ids=np.asarray(ids, dtype=np.int64), vectors=vectors, model=model, dim=dim)
+    return path
+
+
+def vectors_for(ids: list[int], dim: int = 384) -> np.ndarray:
+    return np.array([[float(i)] * dim for i in ids], dtype=np.float32)
+
+
+def read_export(path: Path) -> tuple[dict, list[dict]]:
+    lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    return lines[0], lines[1:]
+
+
+def test_export_writes_a_header_then_every_pending_chunk(
+    conn: sqlite3.Connection, settings: Settings, tmp_path: Path
+) -> None:
+    first = add_chunk(conn, "one")
+    second = add_chunk(conn, "two")
+
+    report = export_pending(conn, tmp_path / "pending.jsonl")
+    assert report.chunks == 2
+
+    header, records = read_export(tmp_path / "pending.jsonl")
+    assert header["model"] == settings.embedding_model
+    assert header["dim"] == settings.embedding_dim
+    assert [r["id"] for r in records] == [first, second]
+    assert [r["text"] for r in records] == ["one", "two"]
+
+
+def test_export_skips_chunks_that_already_have_a_vector(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    add_chunk(conn, "done")
+    pending = add_chunk(conn, "pending")
+    conn.execute("UPDATE chunks SET vector_row = 0 WHERE text = 'done'")
+    conn.commit()
+
+    export_pending(conn, tmp_path / "pending.jsonl")
+    _, records = read_export(tmp_path / "pending.jsonl")
+    assert [r["id"] for r in records] == [pending]
+
+
+def test_export_changes_nothing(conn: sqlite3.Connection, tmp_path: Path) -> None:
+    add_chunk(conn, "one")
+    export_pending(conn, tmp_path / "pending.jsonl")
+    assert conn.execute("SELECT count(*) FROM chunks WHERE vector_row IS NULL").fetchone()[0] == 1
+
+
+def test_import_assigns_rows_and_appends_vectors(
+    conn: sqlite3.Connection, settings: Settings, tmp_path: Path
+) -> None:
+    ids = [add_chunk(conn, "one"), add_chunk(conn, "two")]
+    path = npz(
+        tmp_path / "v.npz",
+        ids,
+        vectors_for(ids, settings.embedding_dim),
+        settings.embedding_model,
+        settings.embedding_dim,
+    )
+
+    report = import_vectors(conn, path)
+    assert (report.imported, report.total_rows) == (2, 2)
+
+    rows = dict(conn.execute("SELECT id, vector_row FROM chunks"))
+    assert sorted(rows.values()) == [0, 1]
+    matrix = load_vectors(settings)
+    assert matrix[rows[ids[0]]][0] == float(ids[0])
+
+
+def test_import_is_safe_to_run_twice(
+    conn: sqlite3.Connection, settings: Settings, tmp_path: Path
+) -> None:
+    ids = [add_chunk(conn, "one")]
+    path = npz(
+        tmp_path / "v.npz",
+        ids,
+        vectors_for(ids, settings.embedding_dim),
+        settings.embedding_model,
+        settings.embedding_dim,
+    )
+
+    import_vectors(conn, path)
+    again = import_vectors(conn, path)
+    assert (again.imported, again.already_embedded, again.total_rows) == (0, 1, 1)
+
+
+def test_import_counts_chunks_it_does_not_recognise(
+    conn: sqlite3.Connection, settings: Settings, tmp_path: Path
+) -> None:
+    ids = [add_chunk(conn, "one")]
+    path = npz(
+        tmp_path / "v.npz",
+        [*ids, 9999],
+        vectors_for([*ids, 9999], settings.embedding_dim),
+        settings.embedding_model,
+        settings.embedding_dim,
+    )
+
+    report = import_vectors(conn, path)
+    assert (report.imported, report.unknown) == (1, 1)
+
+
+def test_import_refuses_another_models_vectors(
+    conn: sqlite3.Connection, settings: Settings, tmp_path: Path
+) -> None:
+    ids = [add_chunk(conn, "one")]
+    path = npz(tmp_path / "v.npz", ids, vectors_for(ids, 1024), "voyage-3.5", 1024)
+
+    with pytest.raises(EmbeddingError, match="cannot be compared"):
+        import_vectors(conn, path)
+    assert conn.execute("SELECT vector_row FROM chunks").fetchone()[0] is None
+
+
+def test_import_refuses_a_truncated_transfer(
+    conn: sqlite3.Connection, settings: Settings, tmp_path: Path
+) -> None:
+    ids = [add_chunk(conn, "one"), add_chunk(conn, "two")]
+    path = npz(
+        tmp_path / "v.npz",
+        ids,
+        vectors_for(ids[:1], settings.embedding_dim),
+        settings.embedding_model,
+        settings.embedding_dim,
+    )
+
+    with pytest.raises(EmbeddingError, match="incomplete"):
+        import_vectors(conn, path)
+
+
+def test_import_refuses_nan(conn: sqlite3.Connection, settings: Settings, tmp_path: Path) -> None:
+    ids = [add_chunk(conn, "one")]
+    broken = vectors_for(ids, settings.embedding_dim)
+    broken[0][0] = np.nan
+    path = npz(tmp_path / "v.npz", ids, broken, settings.embedding_model, settings.embedding_dim)
+
+    with pytest.raises(EmbeddingError, match="NaN"):
+        import_vectors(conn, path)
+
+
+def test_import_names_what_the_file_is_missing(conn: sqlite3.Connection, tmp_path: Path) -> None:
+    path = tmp_path / "v.npz"
+    np.savez(path, ids=np.zeros(0, dtype=np.int64))
+
+    with pytest.raises(EmbeddingError, match="missing dim, model, vectors"):
+        import_vectors(conn, path)
+
+
+def test_export_then_import_round_trips_through_the_cluster_script(
+    conn: sqlite3.Connection, settings: Settings, tmp_path: Path
+) -> None:
+    """The two halves have to agree on the file format, so exercise both."""
+    ids = [add_chunk(conn, "one"), add_chunk(conn, "two")]
+    export = tmp_path / "pending.jsonl"
+    export_pending(conn, export)
+
+    header, records = read_export(export)
+    out = npz(
+        tmp_path / "v.npz",
+        [r["id"] for r in records],
+        vectors_for([r["id"] for r in records], header["dim"]),
+        header["model"],
+        header["dim"],
+    )
+
+    assert import_vectors(conn, out).imported == 2
+    assert export_pending(conn, tmp_path / "again.jsonl").chunks == 0
+    assert sorted(dict(conn.execute("SELECT id, vector_row FROM chunks")).keys()) == sorted(ids)

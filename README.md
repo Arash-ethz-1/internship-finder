@@ -43,16 +43,23 @@ only where they are used, and the error names the missing variable.
 | Variable | Needed for | Where to get it |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | the agent, letter drafting, email classification | <https://console.anthropic.com/settings/keys> |
-| `VOYAGE_API_KEY` | embeddings | <https://dashboard.voyageai.com/api-keys> |
+| `VOYAGE_API_KEY` | embeddings, and only with `EMBEDDING_PROVIDER=voyage` | <https://dashboard.voyageai.com/api-keys> |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | `sync-email` only | <https://console.cloud.google.com/apis/credentials> |
 
 None of these come with a Claude subscription: the Claude API bills separately
 through the Console, and Voyage and Google are other vendors again.
 
-Anthropic has no embeddings endpoint, which is why embeddings are a second
-vendor. Changing `EMBEDDING_MODEL` or `EMBEDDING_DIM` invalidates
-`data/vectors.npy`; the app refuses to mix vector spaces rather than silently
-returning nonsense.
+Embeddings do not need a key at all by default. `EMBEDDING_PROVIDER=local`
+runs a small multilingual ONNX model on this machine through `fastembed`, so
+re-embedding the corpus while tuning chunking costs nothing but time — which
+matters, because tuning retrieval means doing it repeatedly. Set
+`EMBEDDING_PROVIDER=voyage` to use the API instead; Anthropic has no
+embeddings endpoint, which is why that path is a second vendor.
+
+Changing `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL` or `EMBEDDING_DIM`
+invalidates `data/vectors.npy`; the app refuses to mix vector spaces rather
+than silently returning nonsense. Delete `data/vectors.npy` and
+`data/vectors.meta.json`, then re-run `cli embed`.
 
 ## Running
 
@@ -63,6 +70,11 @@ python dev.py web      # frontend only
 python dev.py test     # ruff check + pytest
 python dev.py lint     # ruff + ruff format --check + tsc + eslint
 ```
+
+Then open <http://localhost:5173> — `localhost`, not `127.0.0.1`; Vite binds to
+the first one and checking the other looks like the server is down. Four
+surfaces: `/postings` (the screener), `/chat` (the agent), `/letters/:id`, and
+`/inbox` (email suggestions).
 
 `plan.md` asks for a Makefile or justfile; neither `make` nor `just` is
 installed on the development machine, so `dev.py` is the task runner. Python is
@@ -82,26 +94,91 @@ Subcommands are added by the phase that makes them meaningful: `ingest`
 
 ## First run, in order
 
-Everything below `ingest` needs API keys. `cli status` prints where the
-pipeline currently stands at any point.
+Ingesting and embedding need no keys; the agent, letters and the email
+classifier need `ANTHROPIC_API_KEY`.
 
 ```bash
 cd backend
-uv run python -m agent_app.cli ingest          # fetch every board (no keys needed)
-uv run python -m agent_app.cli embed           # chunk + embed  -> VOYAGE_API_KEY
-uv run python -m agent_app.cli ingest-profile  # chunk + embed profile/  -> VOYAGE_API_KEY
+uv run python -m agent_app.cli ingest          # fetch every board
+uv run python -m agent_app.cli embed           # chunk + embed
+uv run python -m agent_app.cli ingest-profile  # chunk + embed profile/
 uv run python -m agent_app.cli status          # what is in the database
 ```
 
-`embed` is safe to re-run: chunks that already have a vector are skipped and
-repeated text is served from the on-disk cache, so an interrupted run resumes
-for free. It is the one command that spends real money on first use — roughly
-six chunks per posting, at about a thousand characters each.
+On a full corpus `embed` is the slow one — see **Embedding a lot of chunks**
+below.
 
-Once postings are embedded, the rest works:
+## Every so often
+
+Boards change, so the loop is: fetch, embed what is new, read the replies.
 
 ```bash
-python dev.py                                        # dashboard on :5173
+cd backend
+
+# 1. New and changed postings. Idempotent: re-running does not duplicate, and
+#    a posting that disappears from a board is kept, not deleted. Chunking runs
+#    as part of it, so new postings are keyword-searchable immediately.
+uv run python -m agent_app.cli ingest
+
+# 2. Give the new chunks vectors. Only the new ones — anything with a vector
+#    is skipped, and repeated text comes from the on-disk cache.
+uv run python -m agent_app.cli embed
+
+# 3. What has the pipeline got now?
+uv run python -m agent_app.cli status
+```
+
+Widening the search is a separate command, because verifying company boards is
+slow and you will not want it on every run:
+
+```bash
+uv run python -m agent_app.cli discover --from crawl --source ashby --limit 50
+uv run python -m agent_app.cli discover --from llm --query "robotics companies in Switzerland"
+uv run python -m agent_app.cli discover --from file --file names.txt
+uv run python -m agent_app.cli companies       # what was verified, what was dead
+```
+
+`discover` never trusts a token because a model produced it: a token is real
+when the board answers 200, and failures are recorded so the same candidate is
+never checked twice.
+
+To read the replies to applications you have already sent, see **Tracking
+applications from email** below:
+
+```bash
+uv run python -m agent_app.cli sync-email
+```
+
+## Embedding a lot of chunks
+
+`embed` is safe to re-run and safe to interrupt: chunks that already have a
+vector are skipped, and it checkpoints as it goes. It also rebuilds the keyword
+index in `data/bm25.npz` when the chunks table has moved on — BM25 reads that
+instead of re-tokenising the corpus on every query, which is the difference
+between a search taking 26 seconds and 2.
+
+The local model manages roughly **1.7 chunks a second** on a laptop CPU, which
+is fine for the few hundred chunks an `ingest` run adds and useless for a full
+corpus — 135,000 chunks is about 22 hours. For that, the embedding runs
+somewhere with a GPU and only the text and the vectors travel:
+
+```bash
+uv run python -m agent_app.cli embed --export ../data/pending.jsonl
+#   ... run cluster/embed_chunks.py wherever the compute is ...
+uv run python -m agent_app.cli embed --import ../data/vectors.npz
+```
+
+`backend/cluster/README.md` has the whole round trip for the ETH TIK cluster:
+the conda environment, the `sbatch` script, and why the same library has to run
+on both ends. `--export` changes nothing in the database and `--import` skips
+chunks that already have a vector, so both are safe to repeat.
+
+Rule of thumb: a normal `ingest` adds few enough chunks to embed locally over
+lunch. Re-chunking the whole corpus does not.
+
+## Once postings are embedded
+
+```bash
 uv run python -m agent_app.cli chat                  # the agent, in the terminal
 uv run python -m agent_app.cli draft-letter <id>     # a grounded letter
 uv run python -m agent_app.cli eval                  # retrieval numbers
@@ -160,7 +237,7 @@ ephemeral port, with PKCE. Every property the plan asked for is unchanged.
 backend/    Python package `agent_app` — ingest, core, api, cli
 frontend/   Vite + React 19 + TypeScript + Tailwind v4
 profile/    project write-ups, gitignored except the README and example
-data/       sqlite, vectors.npy, embedding cache, drafted letters — gitignored
+data/       sqlite, vectors.npy, bm25.npz, embedding cache, letters — gitignored
 ```
 
 ## Dependency justifications
@@ -171,7 +248,10 @@ data/       sqlite, vectors.npy, embedding cache, drafted letters — gitignored
 embeddings API, so retry and backoff are written once. `numpy` — the vector
 store is a single array; brute-force cosine is correct at this corpus size.
 `python-dotenv` — keeps keys out of the repo. `anthropic` — the agent's model
-client, and the email classifier's. `fastapi` + `uvicorn` — the API layer. `pytest`, `ruff` — tests and
+client, and the email classifier's. `fastembed` — runs the embedding model
+locally as ONNX, so the corpus can be re-embedded for free while chunking is
+being tuned; chosen over `sentence-transformers` because that pulls PyTorch
+(~2.5 GB) to do the same job. `fastapi` + `uvicorn` — the API layer. `pytest`, `ruff` — tests and
 lint. No `voyageai` client: Phase 4 requires hand-written batching and backoff,
 so a client that already does that would be redundant.
 
