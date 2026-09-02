@@ -25,7 +25,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .config import ConfigError, Settings, get_settings
-from .db import SOURCES, stats, table_names
+from .db import BOARD_SOURCES, SOURCES, stats, table_names
 from .ingest import (
     Candidate,
     PoliteClient,
@@ -35,6 +35,7 @@ from .ingest import (
     from_crawl,
     from_file,
     from_llm,
+    index_pending_locations,
     load_companies,
     load_verified,
     run_discovery,
@@ -90,6 +91,14 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         print("")
         print(chunked.format())
 
+    # Same reasoning: parsing a location string costs nothing and a posting
+    # that cannot be filtered by place is not much use in a search that is
+    # mostly about place.
+    located = index_pending_locations(conn)
+    if located.pending:
+        print("")
+        print(located.format())
+
     total = conn.execute("SELECT count(*) FROM postings").fetchone()[0]
     print(f"\n{total} posting(s) in {settings.db_path}")
 
@@ -103,7 +112,7 @@ def cmd_discover(args: argparse.Namespace) -> int:
     conn = get_db()
     seed_from_toml(conn, load_companies(settings.companies_path))
 
-    sources: tuple[str, ...] = (args.source,) if args.source else SOURCES
+    sources: tuple[str, ...] = (args.source,) if args.source else BOARD_SOURCES
     candidates: list[Candidate] = []
 
     if args.origin == "crawl":
@@ -551,7 +560,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_discover.add_argument("--query", help="what to look for, with --from llm")
     p_discover.add_argument("--file", help="path to a company-name list, with --from file")
-    p_discover.add_argument("--source", choices=SOURCES, help="only check this board")
+    p_discover.add_argument("--source", choices=BOARD_SOURCES, help="only check this board")
     p_discover.add_argument(
         "--limit",
         type=int,
@@ -572,7 +581,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Show every discovered company and its verification status.",
     )
     p_companies.add_argument("--status", choices=["verified", "dead", "unresolved"])
-    p_companies.add_argument("--source", choices=SOURCES)
+    p_companies.add_argument("--source", choices=BOARD_SOURCES)
     p_companies.set_defaults(func=cmd_companies)
 
     p_letter = sub.add_parser(

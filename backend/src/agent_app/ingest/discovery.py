@@ -15,14 +15,21 @@ import logging
 import sqlite3
 from dataclasses import dataclass, field
 
-from ..db import SOURCES, now_iso
-from . import ashby, greenhouse, lever
+from ..db import BOARD_SOURCES, now_iso
+from . import ashby, greenhouse, lever, personio
 from .candidates import Candidate, slug_candidates
 from .runner import BoardNotFound, CompanyEntry, FetchFailed, PoliteClient
 
 log = logging.getLogger(__name__)
 
-MODULES = {greenhouse.SOURCE: greenhouse, lever.SOURCE: lever, ashby.SOURCE: ashby}
+# Only boards can be discovered. `manual` is in `SOURCES` but is a posting
+# you typed in yourself, so there is nothing to probe.
+MODULES = {
+    greenhouse.SOURCE: greenhouse,
+    lever.SOURCE: lever,
+    ashby.SOURCE: ashby,
+    personio.SOURCE: personio,
+}
 
 
 @dataclass
@@ -118,10 +125,11 @@ def probe(
     every job with its full description.
     """
     module = MODULES[source]
+    not_found = getattr(module, "NOT_FOUND_STATUSES", (404,))
     for host in module.HOSTS:
         url = module.verify_url(token, host)
         try:
-            payload = client.get_json(url)
+            payload = client.get_json(url, not_found)
         except BoardNotFound:
             continue
         except FetchFailed as exc:
@@ -138,7 +146,7 @@ def verify_candidate(
     candidate: Candidate,
     report: DiscoveryReport,
     *,
-    sources: tuple[str, ...] = SOURCES,
+    sources: tuple[str, ...] = BOARD_SOURCES,
 ) -> None:
     """Resolve one candidate to a real board, or record that it is not one."""
     # Crawl already knows the exact source and token: one probe settles it.
@@ -270,7 +278,7 @@ def run_discovery(
     client: PoliteClient,
     candidates: list[Candidate],
     *,
-    sources: tuple[str, ...] = SOURCES,
+    sources: tuple[str, ...] = BOARD_SOURCES,
     limit: int | None = None,
 ) -> DiscoveryReport:
     """Verify a batch of candidates and record every outcome."""

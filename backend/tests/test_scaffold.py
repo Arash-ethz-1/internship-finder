@@ -8,7 +8,7 @@ import pytest
 
 from agent_app import cli
 from agent_app.config import ConfigError, Settings
-from agent_app.db import STATUSES, TRACKED_STATUSES, table_names
+from agent_app.db import RETIRED_STATUSES, STATUSES, TRACKED_STATUSES, table_names
 
 
 def test_settings_paths_live_under_the_data_dir(settings: Settings) -> None:
@@ -30,14 +30,15 @@ def test_init_db_creates_every_table(conn: sqlite3.Connection) -> None:
         "chunks",
         "companies",
         "email_matches",
+        "posting_locations",
         "postings",
         "status_history",
     ]
 
 
+# PLAN.md's own list, minus the one status that has since been retired.
 PLAN_STATUSES = {
     "interested",
-    "ready_to_submit",
     "applied",
     "rejected",
     "interviewing",
@@ -45,9 +46,26 @@ PLAN_STATUSES = {
     "declined",
 }
 
+# Retired 2026-09-02: `ready_to_submit` described a state of the author's
+# intent rather than of the world, and "interested but not yet sent" already
+# covered it. The letter-is-written case it stood for is a filter --
+# `letter_path IS NOT NULL AND status = 'interested'` -- not a status.
+RETIRED_FROM_PLAN = {"ready_to_submit"}
+
 
 def test_the_plans_status_set_is_still_all_there() -> None:
     assert PLAN_STATUSES <= set(STATUSES)
+
+
+def test_retired_statuses_are_really_gone() -> None:
+    """A retired status must not come back by accident.
+
+    It also must stay in `RETIRED_STATUSES`, because that mapping is what
+    `migrate()` uses to move an existing application off it -- deleting the
+    entry would strand any row still holding the old value.
+    """
+    assert RETIRED_FROM_PLAN & set(STATUSES) == set()
+    assert RETIRED_FROM_PLAN <= set(RETIRED_STATUSES)
 
 
 def test_the_additions_to_the_plan_are_the_documented_two() -> None:

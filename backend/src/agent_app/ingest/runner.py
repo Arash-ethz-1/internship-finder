@@ -12,6 +12,7 @@ smearing it across the three source modules would both be worse.)
 
 from __future__ import annotations
 
+import inspect
 import logging
 import sqlite3
 import time
@@ -24,7 +25,7 @@ from typing import Any
 import httpx
 
 from ..db import SOURCES, Posting
-from . import ashby, greenhouse, lever
+from . import ashby, greenhouse, lever, personio
 from .normalize import now_iso
 
 log = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ PARSERS: dict[str, ModuleType] = {
     greenhouse.SOURCE: greenhouse,
     lever.SOURCE: lever,
     ashby.SOURCE: ashby,
+    personio.SOURCE: personio,
 }
 
 DEFAULT_MIN_INTERVAL = 1.0  # seconds between requests: one per second
@@ -72,6 +74,8 @@ class CompanyResult:
     new: int = 0
     updated: int = 0
     rechunked: int = 0
+    closed: int = 0  # were on this board last run and are not on it now
+    reopened: int = 0  # were closed and the board is listing them again
     api_host: str | None = None
     error: str | None = None
 
@@ -97,6 +101,14 @@ class IngestReport:
     @property
     def updated(self) -> int:
         return sum(r.updated for r in self.results)
+
+    @property
+    def closed(self) -> int:
+        return sum(r.closed for r in self.results)
+
+    @property
+    def reopened(self) -> int:
+        return sum(r.reopened for r in self.results)
 
     @property
     def failures(self) -> list[CompanyResult]:
@@ -179,13 +191,22 @@ class PoliteClient:
         if remaining > 0:
             self._sleep(remaining)
 
-    def get_json(self, url: str) -> Any:
+    def get_json(self, url: str, not_found: tuple[int, ...] = (404,)) -> Any:
         """GET a URL and decode JSON, retrying transient failures."""
-        response = self.get(url)
+        response = self.get(url, not_found=not_found)
         try:
             return response.json()
         except ValueError as exc:
             raise FetchFailed(f"Invalid JSON from {url}: {exc}") from exc
+
+    def get_bytes(self, url: str, not_found: tuple[int, ...] = (404,)) -> bytes:
+        """GET a URL and return the undecoded body.
+
+        Personio's feed is XML rather than JSON, and its parser wants the raw
+        bytes so the XML declaration decides the encoding rather than httpx
+        guessing from a header.
+        """
+        return self.get(url, not_found=not_found).content
 
     def get_text(self, url: str, params: dict[str, str] | None = None) -> str:
         """GET a URL and return the body as text.
@@ -196,8 +217,21 @@ class PoliteClient:
         """
         return self.get(url, params).text
 
-    def get(self, url: str, params: dict[str, str] | None = None) -> httpx.Response:
-        """GET a URL, waiting our turn and retrying transient failures."""
+    def get(
+        self,
+        url: str,
+        params: dict[str, str] | None = None,
+        *,
+        not_found: tuple[int, ...] = (404,),
+    ) -> httpx.Response:
+        """GET a URL, waiting our turn and retrying transient failures.
+
+        ``not_found`` is which statuses mean "this board does not exist" for
+        this vendor. It is 404 nearly everywhere, but Personio answers 429 with
+        an HTML page for an unknown token, and retrying that twice before
+        reporting a transient failure would make discovery record the company
+        as unresolved and check it again forever.
+        """
         last_error: str = "unknown error"
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -210,8 +244,8 @@ class PoliteClient:
                 last_error = f"{type(exc).__name__}: {exc}"
                 log.warning("attempt %d/%d for %s failed: %s", attempt, MAX_ATTEMPTS, url, exc)
             else:
-                if response.status_code == 404:
-                    raise BoardNotFound(f"404 for {url}")
+                if response.status_code in not_found:
+                    raise BoardNotFound(f"HTTP {response.status_code} for {url}")
 
                 if response.status_code >= 500 or response.status_code == 429:
                     last_error = f"HTTP {response.status_code}"
@@ -250,19 +284,42 @@ def fetch_company(client: PoliteClient, entry: CompanyEntry) -> tuple[list[Posti
     """
     module = PARSERS[entry.source]
     hosts = hosts_for(entry)
+    not_found = getattr(module, "NOT_FOUND_STATUSES", (404,))
+    # One source serves XML; the rest serve JSON. The module says which.
+    wants_bytes = getattr(module, "FEED_IS_XML", False)
 
     for index, host in enumerate(hosts):
         url = module.build_url(entry.token, host)
         try:
-            payload = client.get_json(url)
+            payload = (
+                client.get_bytes(url, not_found) if wants_bytes else client.get_json(url, not_found)
+            )
         except BoardNotFound:
             if index == len(hosts) - 1:
                 raise
             log.info("%s not on %s, trying next host", entry.token, host)
             continue
-        return module.parse(payload, entry.name), host
+        return parse_with(module, payload, entry, host), host
 
     raise BoardNotFound(f"no host served {entry.source}:{entry.token}")
+
+
+def parse_with(module: ModuleType, payload: Any, entry: CompanyEntry, host: str) -> list[Posting]:
+    """Call a source module's ``parse``, passing the extras it accepts.
+
+    Three of the four sources get the company name and nothing else, because
+    the board's own response carries the job URL. Personio's does not -- the
+    URL has to be built from the token and host -- so its ``parse`` takes two
+    more arguments. Inspecting the signature keeps that difference inside the
+    one module it belongs to.
+    """
+    parameters = inspect.signature(module.parse).parameters
+    extra: dict[str, Any] = {}
+    if "token" in parameters:
+        extra["token"] = entry.token
+    if "host" in parameters:
+        extra["host"] = host
+    return module.parse(payload, entry.name, **extra)
 
 
 def upsert_postings(
@@ -354,6 +411,70 @@ def upsert_postings(
     return (new, updated, rechunked)
 
 
+def reconcile_closed(
+    conn: sqlite3.Connection,
+    entry: CompanyEntry,
+    postings: list[Posting],
+    *,
+    seen_at: str | None = None,
+) -> tuple[int, int]:
+    """Close postings this company's board no longer lists, reopen ones it does.
+
+    Returns ``(closed, reopened)``.
+
+    The signal costs nothing extra: every board here serves a company's *whole*
+    list in one response, so anything we hold for that company and did not see
+    in it has been taken down. The set difference is the detection.
+
+    Two things this must not do. It must never run on a failed fetch — a 500
+    would otherwise close every posting the company has — which is why the
+    caller only reaches here after a successful parse, and why an empty
+    response is treated as suspect rather than as "everything closed". And it
+    must never delete: an application, its letter and its history all point at
+    the posting, and one you applied to is the row you least want to lose.
+
+    Reopening is the same comparison in reverse. Boards do relist a posting,
+    and a stale `closed_at` would quietly hide something you could still apply
+    to.
+    """
+    seen_at = seen_at or now_iso()
+    live = {p.id for p in postings}
+
+    held = {
+        row["id"]: row["closed_at"]
+        for row in conn.execute(
+            "SELECT id, closed_at FROM postings WHERE source = ? AND company = ?",
+            (entry.source, entry.name),
+        )
+    }
+    if not held:
+        return (0, 0)
+
+    # A board that answers 200 with nothing is far more often broken than it is
+    # a company that fired everyone. Never close a whole roster on that.
+    if not live and held:
+        log.warning(
+            "%s returned no postings but %d are held; not closing any", entry.name, len(held)
+        )
+        return (0, 0)
+
+    to_close = [pid for pid, closed_at in held.items() if pid not in live and closed_at is None]
+    to_reopen = [pid for pid, closed_at in held.items() if pid in live and closed_at is not None]
+
+    if to_close:
+        marks = ",".join("?" * len(to_close))
+        conn.execute(
+            f"UPDATE postings SET closed_at = ? WHERE id IN ({marks})", [seen_at, *to_close]
+        )
+        log.info("%s: %d posting(s) gone from the board", entry.name, len(to_close))
+    if to_reopen:
+        marks = ",".join("?" * len(to_reopen))
+        conn.execute(f"UPDATE postings SET closed_at = NULL WHERE id IN ({marks})", to_reopen)
+        log.info("%s: %d posting(s) back on the board", entry.name, len(to_reopen))
+
+    return (len(to_close), len(to_reopen))
+
+
 def ingest_company(
     conn: sqlite3.Connection,
     client: PoliteClient,
@@ -377,6 +498,7 @@ def ingest_company(
     result.api_host = host
     result.fetched = len(postings)
     result.new, result.updated, result.rechunked = upsert_postings(conn, postings, seen_at=seen_at)
+    result.closed, result.reopened = reconcile_closed(conn, entry, postings, seen_at=seen_at)
 
     # Remember which host answered so the next run does not re-probe.
     conn.execute(
@@ -404,8 +526,8 @@ def run_ingest(
 
 def format_summary(report: IngestReport) -> str:
     """Render the per-company table PLAN.md's Phase 2 check asks for."""
-    headers = ("company", "source", "fetched", "new", "updated")
-    rows: list[tuple[str, str, str, str, str]] = []
+    headers = ("company", "source", "fetched", "new", "updated", "closed")
+    rows: list[tuple[str, ...]] = []
 
     for result in report.results:
         if result.ok:
@@ -416,10 +538,11 @@ def format_summary(report: IngestReport) -> str:
                     str(result.fetched),
                     str(result.new),
                     str(result.updated),
+                    str(result.closed) if result.closed else "",
                 )
             )
         else:
-            rows.append((result.entry.name, result.entry.source, "—", "—", "—"))
+            rows.append((result.entry.name, result.entry.source, "—", "—", "—", "—"))
 
     widths = [
         max(len(headers[i]), *(len(row[i]) for row in rows)) if rows else len(headers[i])
@@ -435,8 +558,19 @@ def format_summary(report: IngestReport) -> str:
     out.extend(line(row) for row in rows)
     out.append("  ".join("-" * w for w in widths))
     out.append(
-        line(("total", "", str(report.fetched), str(report.new), str(report.updated))).rstrip()
+        line(
+            (
+                "total",
+                "",
+                str(report.fetched),
+                str(report.new),
+                str(report.updated),
+                str(report.closed),
+            )
+        ).rstrip()
     )
+    if report.reopened:
+        out.append(f"  {report.reopened} posting(s) were relisted and are open again")
 
     for failure in report.failures:
         out.append(f"! {failure.entry.name} ({failure.entry.source}): {failure.error}")

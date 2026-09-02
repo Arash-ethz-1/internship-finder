@@ -19,6 +19,14 @@ from .discovery import (
     run_discovery,
     seed_from_toml,
 )
+from .locations import (
+    LocationReport,
+    index_pending_locations,
+    index_posting,
+    reindex_all_locations,
+    top_unresolved,
+)
+from .locations import coverage as location_coverage
 from .profile import ProfileReport, ingest_profile, read_profile_docs
 from .runner import (
     BoardNotFound,
@@ -29,6 +37,7 @@ from .runner import (
     PoliteClient,
     format_summary,
     load_companies,
+    reconcile_closed,
     run_ingest,
 )
 
@@ -40,6 +49,7 @@ __all__ = [
     "DiscoveryReport",
     "FetchFailed",
     "IngestReport",
+    "LocationReport",
     "PoliteClient",
     "PostingChunkReport",
     "ProfileReport",
@@ -49,13 +59,19 @@ __all__ = [
     "from_crawl",
     "from_file",
     "from_llm",
-    "load_companies",
+    "index_pending_locations",
+    "index_posting",
     "ingest_profile",
+    "load_companies",
     "load_verified",
+    "location_coverage",
     "pending_posting_ids",
     "read_profile_docs",
+    "reconcile_closed",
+    "reindex_all_locations",
     "run_discovery",
     "run_ingest",
     "seed_from_toml",
     "slug_candidates",
+    "top_unresolved",
 ]

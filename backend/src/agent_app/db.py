@@ -35,6 +35,18 @@ def now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _optional(row: sqlite3.Row, column: str) -> Any:
+    """Read a column that a narrower SELECT may not have projected.
+
+    ``sqlite3.Row`` raises rather than returning ``None`` for a missing column,
+    and several queries here project a subset of ``postings``.
+    """
+    try:
+        return row[column]
+    except (IndexError, KeyError):
+        return None
+
+
 # The full status set from PLAN.md's data model, plus `found` (added
 # 2026-09-01). A posting with no `applications` row at all is untriaged, which
 # is a distinct state and not the same as any of these.
@@ -47,13 +59,20 @@ STATUSES: tuple[str, ...] = (
     "found",
     "not_relevant",
     "interested",
-    "ready_to_submit",
     "applied",
     "rejected",
     "interviewing",
     "offer",
     "declined",
 )
+
+# `ready_to_submit` was removed on 2026-09-02. It described a state of your
+# intent rather than a state of the world, and "interested but not yet sent"
+# already covers it. The one real thing it encoded -- the letter is written,
+# it just needs sending -- is `letter_path IS NOT NULL AND status =
+# 'interested'`, which is a filter rather than a status. `migrate()` moves any
+# surviving row to `interested` and writes a history entry saying so.
+RETIRED_STATUSES: dict[str, str] = {"ready_to_submit": "interested"}
 
 # `not_relevant` is you passing on a posting; `rejected` is a company passing
 # on you. Conflating them was a real bug: triaging a search result as "not for
@@ -69,7 +88,31 @@ STATUSES: tuple[str, ...] = (
 # means "my pipeline" filters on this, not STATUSES.
 TRACKED_STATUSES: tuple[str, ...] = tuple(s for s in STATUSES if s not in ("found", "not_relevant"))
 
-SOURCES: tuple[str, ...] = ("greenhouse", "lever", "ashby")
+# Boards `cli ingest` fetches. Every one of these serves a whole company's
+# jobs from one public JSON endpoint, which is what makes closed-posting
+# detection possible: whatever the board omits has been taken down.
+#
+# The first three are the US-startup ATSes PLAN.md started with. `personio`
+# was added on 2026-09-02 to reach European postings, which the other three
+# barely carry: it is the default ATS for German, Austrian and Swiss employers,
+# and `Praktikum` and `Werkstudent` listings live there.
+#
+# Probed on 2026-09-02 and deliberately not added: Recruitee (every token
+# tried 404s, so the documented host is wrong or gone), SmartRecruiters
+# (answers 200 with an empty list for *any* token, so a board cannot be
+# verified and a typo would look alive), Workable (the widget endpoint returns
+# the account but zero jobs for every board tried), Join (422 on the
+# documented path). Each needs its own investigation before it earns a module.
+BOARD_SOURCES: tuple[str, ...] = ("greenhouse", "lever", "ashby", "personio")
+
+# `manual` is not a board. It is a posting you entered by hand -- LinkedIn, a
+# company's own site, an email from a friend -- and it exists so applications
+# made outside the three ATSes are still tracked, still searchable, and still
+# matched against your mail. Ingest never touches a manual posting, which is
+# also why it can never be marked closed by a board that has never heard of it.
+MANUAL_SOURCE = "manual"
+
+SOURCES: tuple[str, ...] = (*BOARD_SOURCES, MANUAL_SOURCE)
 
 LEVELS: tuple[str, ...] = ("intern", "newgrad", "unknown")
 
@@ -98,6 +141,12 @@ class Posting:
     level: str = "unknown"
     first_seen: str | None = None
     last_seen: str | None = None
+    closed_at: str | None = None
+
+    @property
+    def is_closed(self) -> bool:
+        """Has the board stopped listing this posting."""
+        return self.closed_at is not None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> Posting:
@@ -117,6 +166,7 @@ class Posting:
             level=row["level"],
             first_seen=row["first_seen"],
             last_seen=row["last_seen"],
+            closed_at=_optional(row, "closed_at"),
         )
 
 
@@ -141,13 +191,37 @@ CREATE TABLE IF NOT EXISTS postings (
     deadline    TEXT,
     level       TEXT NOT NULL DEFAULT 'unknown',
     first_seen  TEXT NOT NULL,
-    last_seen   TEXT NOT NULL
+    last_seen   TEXT NOT NULL,
+    -- When the board stopped listing this posting. NULL means still open.
+    -- The row is never deleted: an application, its letter and its history all
+    -- point here, and a posting you applied to is the one you least want to
+    -- lose. Closed means "do not show me this as a candidate", not "forget it".
+    closed_at   TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_postings_company ON postings(company);
 CREATE INDEX IF NOT EXISTS idx_postings_level   ON postings(level);
 CREATE INDEX IF NOT EXISTS idx_postings_source  ON postings(source);
 CREATE INDEX IF NOT EXISTS idx_postings_seen    ON postings(last_seen);
+CREATE INDEX IF NOT EXISTS idx_postings_closed  ON postings(closed_at);
+
+-- One row per place a posting is offered in. A table rather than columns on
+-- `postings` because multi-location postings are ordinary -- "Zurich; London",
+-- "Remote - EMEA" -- and flattening them to one city silently loses the rest.
+-- `raw` keeps the board's own string so a bad parse is always visible.
+CREATE TABLE IF NOT EXISTS posting_locations (
+    id         INTEGER PRIMARY KEY,
+    posting_id TEXT NOT NULL REFERENCES postings(id) ON DELETE CASCADE,
+    raw        TEXT NOT NULL,
+    city       TEXT,
+    country    TEXT,                      -- ISO 3166-1 alpha-2, e.g. "CH"
+    region     TEXT,                      -- "europe", "north_america", ...
+    UNIQUE (posting_id, raw)
+);
+
+CREATE INDEX IF NOT EXISTS idx_posting_locations_posting ON posting_locations(posting_id);
+CREATE INDEX IF NOT EXISTS idx_posting_locations_country ON posting_locations(country);
+CREATE INDEX IF NOT EXISTS idx_posting_locations_region  ON posting_locations(region);
 
 CREATE TABLE IF NOT EXISTS chunks (
     id          INTEGER PRIMARY KEY,
@@ -263,9 +337,83 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
 
 
 def init_db(conn: sqlite3.Connection) -> None:
-    """Create every table and index if it does not already exist."""
+    """Create every table and index if it does not already exist, then migrate.
+
+    Columns are added *before* the schema script runs, not after. ``CREATE
+    TABLE IF NOT EXISTS`` does nothing to a table that already exists, so an
+    index over a newly added column would be created against a table that does
+    not have it yet. On a fresh database the column pass finds no tables and
+    does nothing, which is exactly right.
+    """
+    _add_missing_columns(conn)
     with conn:
         conn.executescript(SCHEMA)
+    _migrate_retired_statuses(conn)
+
+
+# Columns added to existing tables after the first release. `CREATE TABLE IF
+# NOT EXISTS` does nothing for a table that already exists, so these need an
+# explicit ALTER. Adding a nullable column to SQLite is instant regardless of
+# table size.
+_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("postings", "closed_at", "TEXT"),)
+
+
+def migrate(conn: sqlite3.Connection) -> list[str]:
+    """Bring an existing database up to the current schema.
+
+    Runs on every connection, does nothing when there is nothing to do, and
+    returns a line per change so the caller can log what happened. Kept
+    deliberately small: this project has one database on one machine, so a
+    migration framework would be more moving parts than the problem has.
+    """
+    return [*_add_missing_columns(conn), *_migrate_retired_statuses(conn)]
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> list[str]:
+    """``ALTER TABLE ... ADD COLUMN`` for anything the schema gained later."""
+    applied: list[str] = []
+
+    for table, column, decl in _ADDED_COLUMNS:
+        present = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if not present:  # table does not exist yet; SCHEMA will have made it
+            continue
+        if column not in present:
+            with conn:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            applied.append(f"{table}.{column} added")
+
+    return applied
+
+
+def _migrate_retired_statuses(conn: sqlite3.Connection) -> list[str]:
+    """Move applications off a status that no longer exists.
+
+    Every move writes a ``status_history`` row. A status disappearing from the
+    app must not make the change to your pipeline invisible -- the same rule
+    that was applied when `not_relevant` was introduced.
+    """
+    applied: list[str] = []
+    for old, new in RETIRED_STATUSES.items():
+        rows = conn.execute(
+            "SELECT posting_id FROM applications WHERE status = ?", (old,)
+        ).fetchall()
+        if not rows:
+            continue
+
+        changed_at = now_iso()
+        note = f"status '{old}' was retired; moved to '{new}'"
+        with conn:
+            conn.executemany(
+                "INSERT INTO status_history (posting_id, from_status, to_status, note, changed_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                [(row["posting_id"], old, new, note, changed_at) for row in rows],
+            )
+            conn.execute(
+                "UPDATE applications SET status = ?, updated_at = ? WHERE status = ?",
+                (new, changed_at, old),
+            )
+        applied.append(f"{len(rows)} application(s) moved from '{old}' to '{new}'")
+    return applied
 
 
 @contextmanager
@@ -295,6 +443,16 @@ class PostingFilters:
     # have no status at all to be in a list.
     statuses: tuple[str, ...] = ()
     posted_after: str | None = None
+    # Normalised place, from `posting_locations`. `country` is ISO alpha-2 and
+    # `region` one of core.locations.REGIONS. Both match if *any* of a
+    # posting's locations match, because a Zurich-and-London posting is in
+    # Europe once, not twice.
+    country: str | None = None
+    region: str | None = None
+    # Closed postings are hidden by default: the grid is a list of things you
+    # could still apply to. They are never deleted, and this is how you look.
+    include_closed: bool = False
+    only_closed: bool = False
 
 
 SORTABLE = {
@@ -332,6 +490,20 @@ def _posting_where(filters: PostingFilters) -> tuple[str, list[Any]]:
     if filters.posted_after:
         where.append("p.posted_at >= ?")
         params.append(filters.posted_after)
+    if filters.country:
+        where.append(
+            "EXISTS (SELECT 1 FROM posting_locations l WHERE l.posting_id = p.id AND l.country = ?)"
+        )
+        params.append(filters.country.upper())
+    if filters.region:
+        where.append(
+            "EXISTS (SELECT 1 FROM posting_locations l WHERE l.posting_id = p.id AND l.region = ?)"
+        )
+        params.append(filters.region)
+    if filters.only_closed:
+        where.append("p.closed_at IS NOT NULL")
+    elif not filters.include_closed:
+        where.append("p.closed_at IS NULL")
     if filters.statuses:
         alternatives: list[str] = []
         if "untriaged" in filters.statuses:

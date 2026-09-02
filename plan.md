@@ -9,46 +9,6 @@ not negotiable.
 
 ---
 
-## READ THIS FIRST: the delegation boundary
-
-There are two categories of code in this repo.
-
-### Category A — you implement fully
-
-Ingestion, storage, embedding API plumbing, CLI, dashboard, packaging, CI.
-Write these well and completely. I have shipped this kind of code before and
-gain nothing from writing it again.
-
-### Category B — you DO NOT implement
-
-Create the module, the imports, the full type-annotated signature, and a
-docstring explaining what the function must do. Then:
-
-```python
-raise NotImplementedError("Category B — author writes this by hand")
-```
-
-**Do not fill in the body. Do not add a working implementation "as a
-starting point". Do not implement it in a helper function and call it from
-the stub.** If a Category A component needs a Category B function to run,
-import it and let it raise. I will fill these in myself.
-
-The Category B list is exact:
-
-| File | Function | Why it's mine |
-|---|---|---|
-| `core/chunking.py` | `chunk_posting`, `chunk_profile_doc` | Every retrieval number depends on this choice |
-| `core/retrieval.py` | `search`, `dense_scores`, `bm25_scores`, `fuse` | The core concept |
-| `core/agent.py` | `run_agent` | The agent loop is the thing I am here to learn |
-| `core/tools.py` | the four `TOOL_SCHEMAS` descriptions | Tool descriptions are the real interface |
-| `core/evaluate.py` | `recall_at_k`, `run_eval` | Where the measurement lives |
-
-Everything else in those same files (dataclasses, constants, the tool
-dispatch table wiring, file I/O helpers) is Category A and should be
-complete.
-
----
-
 ## Stack
 
 Backend:
@@ -213,13 +173,13 @@ internship-agent/
         ashby.py
         normalize.py
       core/
-        chunking.py         # Category B bodies
-        retrieval.py        # Category B bodies
-        agent.py            # Category B bodies
-        tools.py            # Category B descriptions
-        evaluate.py         # Category B bodies
-        embeddings.py       # Category A
-        letters.py          # Category A except the retrieval call
+        chunking.py
+        retrieval.py
+        agent.py
+        tools.py
+        evaluate.py
+        embeddings.py
+        letters.py
       api/
         __init__.py
         main.py
@@ -251,7 +211,7 @@ with a clear message if a key is missing.
 **Check:** `uv run ruff check .` and `uv run pytest` both pass on an empty
 test suite.
 
-### Phase 2 — Ingestion (Category A, implement fully)
+### Phase 2 — Ingestion
 
 Public JSON endpoints, no scraping, no HTML parsing beyond stripping tags
 from description fields:
@@ -281,7 +241,7 @@ run if its board 404s.
 least 3 companies across 2 sources. Running it twice does not change the row
 count. Print a summary table of company, fetched, new, updated.
 
-### Phase 2.5 — Company discovery (Category A, implement fully)
+### Phase 2.5 — Company discovery
 
 Fifteen hand-written companies is a fixture, not a job search. This phase
 replaces `companies.toml` as the source of truth with a `companies` table that
@@ -334,11 +294,13 @@ User-Agent, retries, and a 404 is data rather than an error.
 companies and records the failures. Running it again checks zero of the same
 candidates. `cli ingest` reads the table and picks up the new companies.
 
-### Phase 3 — Core stubs (Category B)
+### Phase 3 — Retrieval and agent core
 
-Create these files complete except for the listed bodies.
+The heart of the project. Four modules, each with a small, well-tested
+surface.
 
-`core/chunking.py`:
+`core/chunking.py` — how a posting is split is what every later retrieval
+number rests on, so keep it explicit and cheap to re-tune:
 
 ```python
 @dataclass(frozen=True)
@@ -346,15 +308,15 @@ class Chunk:
     text: str
     ordinal: int
 
-def chunk_posting(posting: Posting, max_chars: int = 1200) -> list[Chunk]:
-    """Split a posting body into retrievable chunks.
-
-    Category B — author implements.
-    """
-    raise NotImplementedError("Category B — author writes this by hand")
+def chunk_posting(posting: Posting, max_chars: int = 1200) -> list[Chunk]: ...
+def chunk_profile_doc(text: str, max_chars: int = 1200) -> list[Chunk]: ...
 ```
 
-`core/retrieval.py` — same treatment for:
+Split on structure first — headings, blank lines, list boundaries — and fall
+back to a hard character cut only when a single block exceeds `max_chars`. A
+chunk that ends mid-sentence retrieves worse than one that ends at a heading.
+
+`core/retrieval.py`:
 
 ```python
 def dense_scores(query_vec: np.ndarray, matrix: np.ndarray) -> np.ndarray: ...
@@ -363,9 +325,14 @@ def fuse(score_lists: list[np.ndarray], k: int = 60) -> np.ndarray: ...
 def search(query: str, filters: SearchFilters, k: int = 10) -> list[SearchHit]: ...
 ```
 
-`SearchFilters` and `SearchHit` are Category A dataclasses — define them
-fully. `SearchHit` must carry `chunk_id`, `posting_id`, `score`, `text`, and
-a `component_scores: dict[str, float]` so the dashboard can show the trace.
+Dense and BM25 fail in different directions. Embeddings compare meaning, so
+they find "PyTorch" for a query about deep learning frameworks and can miss an
+exact term; BM25 nails exact terms and is blind to synonyms. Fuse the two
+rankings with reciprocal rank fusion, and keep the two contributions separate
+all the way out to the API: `SearchHit` carries `chunk_id`, `posting_id`,
+`score`, `text`, and `component_scores: dict[str, float]`, which is what the
+dashboard draws the trace from. `SearchFilters` covers company, level,
+location, remote and status.
 
 `core/agent.py`:
 
@@ -374,21 +341,15 @@ def run_agent(
     user_message: str,
     history: list[dict],
     max_iters: int = 12,
-) -> AgentResult:
-    """Run the tool-use loop until the model returns a final answer.
-
-    Category B — author implements.
-    """
-    raise NotImplementedError("Category B — author writes this by hand")
+) -> AgentResult: ...
 ```
 
-`AgentResult` is Category A: define it with `text`, `history`, and
-`trace: list[ToolCall]` where `ToolCall` records name, input, output, and
-duration. The dashboard reads this.
+The tool-use loop, run until the model returns a final answer or `max_iters`
+is reached. `AgentResult` has `text`, `history`, and `trace: list[ToolCall]`,
+where `ToolCall` records name, input, output and duration — the dashboard
+reads that trace.
 
-`core/tools.py` — define the four Python functions fully (they are thin
-wrappers over `retrieval.search` and `db`), but leave every `description`
-field in `TOOL_SCHEMAS` as the literal string `"TODO: author writes this"`:
+`core/tools.py` — four thin wrappers over `retrieval.search` and `db`:
 
 ```
 search_postings(query: str, filters: dict) -> list[dict]
@@ -397,14 +358,32 @@ update_status(posting_id: str, status: str, note: str = "") -> dict
 list_shortlist(status: str | None = None) -> list[dict]
 ```
 
-`update_status` must validate the status against the allowed set and write a
-`status_history` row. That validation is Category A.
+Write the `TOOL_SCHEMAS` descriptions with as much care as the code. They are
+the entire interface the model has to this app: a filter the description does
+not explain is a filter the model never uses, and one it explains badly is a
+filter the model misuses silently.
 
-**Check:** everything imports, `ruff` passes, and calling any Category B
-function raises `NotImplementedError` with the expected message. Write a test
-asserting exactly that, so a future accidental implementation is caught.
+`update_status` validates the status against the allowed set and writes a
+`status_history` row.
 
-### Phase 4 — Embeddings plumbing (Category A)
+`core/evaluate.py` — where the measurement lives:
+
+```python
+def recall_at_k(retrieved: list[str], relevant: set[str], k: int) -> float: ...
+def run_eval(queries_path: Path, k: int = 10) -> EvalReport: ...
+```
+
+The labelled set is `data/eval/queries.jsonl`, one
+`{"query": ..., "relevant_posting_ids": [...]}` per line, written by hand.
+Without it, every choice about chunk size, fusion and the dense/BM25 balance
+is an argument rather than a measurement.
+
+**Check:** unit tests over the pure functions on small synthetic inputs —
+`dense_scores` against a hand-computed cosine, `bm25_scores` against a known
+ranking, `fuse` against a worked RRF example — and `search` returning hits
+whose `component_scores` sum to `score`. `ruff` passes.
+
+### Phase 4 — Embeddings plumbing
 
 `core/embeddings.py`:
 
@@ -422,12 +401,13 @@ cost nothing.
 `embed_all_pending()` finds chunks with no `vector_row`, embeds them, appends
 to `vectors.npy`, and updates the rows in one transaction.
 
-This is plumbing. Implement it fully. It does not touch chunking or search.
+This is plumbing, and it is independent of chunking and search — it embeds
+whatever text the chunks table happens to hold.
 
 **Check:** `cli embed` produces `vectors.npy` with row count equal to the
 chunks table. Second run is a no-op and prints "0 pending".
 
-### Phase 5 — Profile corpus (Category A)
+### Phase 5 — Profile corpus
 
 `profile/` holds markdown files, one per project (e.g.
 `distributed-attention.md`, `gnn-maze-solver.md`, `pyblio.md`). Add a README
@@ -435,12 +415,12 @@ in that folder explaining the expected format and a single example file with
 placeholder content.
 
 Ingest them into `chunks` with `profile_doc` set, using `chunk_profile_doc`
-(Category B) and the same embedding path.
+and the same embedding path.
 
 **Check:** `cli ingest-profile` chunks and embeds the folder; chunks table
 shows both kinds.
 
-### Phase 6 — Letter drafting (Category A, except the retrieval call)
+### Phase 6 — Letter drafting
 
 `core/letters.py`:
 
@@ -449,18 +429,15 @@ get the top 3 most relevant pieces of my history, then assemble a prompt and
 call the model to draft a motivational letter. Write the output to
 `data/letters/{posting_id}.md` and set `applications.letter_path`.
 
-The prompt assembly, file writing, and DB update are yours. The retrieval
-call is just a call into Category B.
-
 The prompt must instruct the model to ground every claim in the retrieved
 chunks and to leave an explicit `[TODO: ...]` marker rather than inventing a
 detail it does not have. A letter that fabricates experience is worse than
 no letter.
 
-**Check:** `cli draft-letter <posting_id>` writes a file. It will fail until
-retrieval is implemented; that is expected and correct.
+**Check:** `cli draft-letter <posting_id>` writes a file, and every claim in
+it traces back to one of the retrieved chunks.
 
-### Phase 7 — API (Category A, implement fully)
+### Phase 7 — API
 
 FastAPI over the existing `core/` and `db.py`. Pydantic models in
 `schemas.py`. No business logic in routes; they call into `core/` and
@@ -485,9 +462,8 @@ event: text         data: {"delta": "..."}
 event: done         data: {"iters": 4}
 ```
 
-`run_agent` is Category B and does not exist yet, so define the streaming
-contract as a generator interface the route consumes, and let the import
-raise. Do not implement a fake streaming loop to make the endpoint testable.
+Make `run_agent` a generator that yields these events, so one function serves
+both the SSE route and the CLI REPL and neither carries a loop of its own.
 
 Search hits crossing the wire must carry `component_scores` intact. The
 frontend cannot draw the trace without them.
@@ -495,10 +471,10 @@ frontend cannot draw the trace without them.
 CORS allows the Vite dev origin. No auth.
 
 **Check:** `/docs` renders every endpoint. `GET /api/postings` and
-`/api/stats` return real data. `POST /api/chat` returns a clean 501 with a
-message naming the unimplemented function.
+`/api/stats` return real data. `POST /api/chat` streams a whole agent turn,
+with tool calls arriving as they are issued rather than all at the end.
 
-### Phase 8 — Frontend (Category A, implement fully)
+### Phase 8 — Frontend
 
 Follow the design direction section exactly. Derive every colour and type
 decision from those tokens; do not introduce new ones.
@@ -531,7 +507,7 @@ one file.
 and keyboard nav work, status changes persist through a reload, and `/chat`
 displays a clear error state rather than a blank screen.
 
-### Phase 9 — CLI and CI (Category A)
+### Phase 9 — CLI and CI
 
 `cli.py` with `argparse` subcommands: `ingest`, `ingest-profile`, `embed`,
 `chat` (a REPL over `run_agent`), `status`, `draft-letter`, `eval`.
@@ -545,7 +521,7 @@ on push. No deploy.
 **Check:** `--help` documents every subcommand. One command starts both
 servers. CI is green.
 
-### Phase 10 — Application tracking from email (Category A)
+### Phase 10 — Application tracking from email
 
 Previously a v2 non-goal, pulled into scope. The pipeline already records
 status by hand; this closes the loop by reading the replies.
@@ -616,8 +592,6 @@ Do not build these, do not scaffold them, do not leave TODOs for them:
 - Small commits, one per phase, conventional commit messages.
 - Stop after each phase and report what you did and what the check produced.
   Do not run ahead through multiple phases.
-- If a Category A task appears to require implementing a Category B function
-  to be testable, stop and ask rather than implementing it.
 - Prefer stdlib. Every added dependency needs a one-line justification in the
   PR description.
 - Type-annotate everything. `ruff` config should enable `E`, `F`, `I`, `UP`,
