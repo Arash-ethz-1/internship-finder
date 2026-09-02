@@ -257,7 +257,7 @@ so a client that already does that would be redundant.
 
 **Frontend.** `react`, `react-dom`, `vite`, `typescript` — the stack.
 `tailwindcss` + `@tailwindcss/vite` — styling from the tokens.
-`@tanstack/react-query` — server state. `@tanstack/react-table` — headless
+`react-markdown` — the agent answers in markdown, and a paragraph of `**bold**` and `1.` shown as source is not an answer; every element is mapped to this app's own classes rather than a prose stylesheet. `@tanstack/react-query` — server state. `@tanstack/react-table` — headless
 grid. `@tanstack/react-virtual` — a few hundred 36px rows need virtualising
 and the table is headless. `react-router` — four routes need a router.
 `@radix-ui/*` — dialog, dropdown, tooltip and popover behaviour only, styled

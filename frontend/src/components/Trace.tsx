@@ -1,4 +1,5 @@
 import type { AgentEvent, FoundPosting, SearchHit } from "../api/client";
+import { Answer } from "./Answer";
 import { ResultList } from "./ResultList";
 import { ScoreBar, ScoreLegend } from "./ScoreBar";
 
@@ -168,7 +169,7 @@ export function Trace({
           ))}
         </ol>
       )}
-      {text && <p className="mt-4 whitespace-pre-wrap text-sm">{text}</p>}
+      {text && <Answer text={text} />}
       {running && steps.length === 0 && !text && (
         <p className="py-3 font-mono text-2xs text-text-faint">thinking…</p>
       )}
