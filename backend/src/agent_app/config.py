@@ -23,12 +23,21 @@ from dotenv import load_dotenv
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = BACKEND_DIR.parent
 
-DEFAULT_AGENT_MODEL = "claude-opus-5"
+# A letter is the one thing here a person actually sends, under their own
+# name, to someone deciding whether to interview them. It gets the strongest
+# model of the four by default, and it is deliberately its own setting: it used
+# to share `agent_model` with the chat loop, so turning the loop down to a
+# cheap model while iterating silently turned the letters down too.
+DEFAULT_LETTER_MODEL = "claude-sonnet-5"
+# The chat loop. Cheap on purpose: it runs many turns per question, and its
+# job is choosing tools and summarising results rather than writing prose
+# anybody will read.
+DEFAULT_AGENT_MODEL = "claude-haiku-4-5"
 # Discovery just lists company names, so it does not need the agent's model.
-DEFAULT_DISCOVERY_MODEL = "claude-sonnet-5"
+DEFAULT_DISCOVERY_MODEL = "claude-haiku-4-5"
 # Classifying a subject line into four buckets is the cheapest judgement call
 # in the app, and it runs once per candidate email.
-DEFAULT_CLASSIFIER_MODEL = "claude-sonnet-5"
+DEFAULT_CLASSIFIER_MODEL = "claude-haiku-4-5"
 # Which embedding backend to build. "local" runs a model on this machine and
 # needs no key at all, which is why it is the default: a fresh clone can embed
 # the whole corpus without signing up for anything.
@@ -70,6 +79,7 @@ class Settings:
     google_client_id: str | None
     google_client_secret: str | None
 
+    letter_model: str
     agent_model: str
     discovery_model: str
     classifier_model: str
@@ -173,6 +183,7 @@ def load_settings() -> Settings:
         voyage_api_key=os.getenv("VOYAGE_API_KEY") or None,
         google_client_id=os.getenv("GOOGLE_CLIENT_ID") or None,
         google_client_secret=os.getenv("GOOGLE_CLIENT_SECRET") or None,
+        letter_model=os.getenv("LETTER_MODEL") or DEFAULT_LETTER_MODEL,
         agent_model=os.getenv("AGENT_MODEL") or DEFAULT_AGENT_MODEL,
         discovery_model=os.getenv("DISCOVERY_MODEL") or DEFAULT_DISCOVERY_MODEL,
         classifier_model=os.getenv("CLASSIFIER_MODEL") or DEFAULT_CLASSIFIER_MODEL,

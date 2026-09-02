@@ -53,8 +53,15 @@ marker is a success, not a failure.
 3. Do not restate the job description back at the reader. Connect specific \
 things the applicant built to specific things the role needs.
 4. Around 250-350 words. Plain paragraphs, no bullet lists, no headers.
-5. Sober and concrete. No "I am thrilled to apply", no "passionate about \
-leveraging synergies". Write like an engineer explaining why the work fits.
+5. Sound like the 21-year-old student who actually did this work, writing to \
+someone they respect. Direct and specific, not formal and not slick. Short \
+sentences are fine. Contractions are fine. Say "I built X and it did Y", not \
+"I leveraged X to drive Y". Nothing about being thrilled, excited, passionate, \
+or eager; no "I am confident that my skills align"; no synergies, no \
+deliverables, no "spearheaded". If a sentence sounds like a consultant wrote \
+it, or like someone fifteen years further into a career, rewrite it plainer.
+6. Never use em dashes or en dashes. Use a comma, a full stop, or restructure \
+the sentence. Do not use semicolons to get around this either.
 
 Return only the letter body. No subject line, no addresses, no signature block."""
 
@@ -96,7 +103,13 @@ add a new one rather than inventing a fact.
 3. Preserve the concrete specifics -- project names, technologies, what was actually built. When \
 shortening, cut adjectives, throat-clearing and restatements of the job description first. The \
 specifics are what make the letter worth sending.
-4. Keep the register: sober, concrete, no "thrilled to apply".
+4. Keep the register: a 21-year-old student writing directly to someone they respect. Specific, \
+not formal and not slick; contractions and short sentences are fine. Nothing about being \
+thrilled, excited or passionate, no "my skills align", no synergies or deliverables. If a \
+sentence sounds like a consultant wrote it, make it plainer.
+5. Never use em dashes or en dashes, and do not reach for a semicolon instead. A comma, a full \
+stop, or a restructured sentence. If the letter you were given contains one, fix it even when \
+that was not what the instruction asked for.
 
 Return only the revised letter body. No commentary on what you changed, no subject line, no \
 signature block."""
@@ -224,7 +237,7 @@ def call_model(settings: Settings, prompt: str) -> str:
     )
     try:
         message = client.messages.create(
-            model=settings.agent_model,
+            model=settings.letter_model,
             max_tokens=2000,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
@@ -244,6 +257,38 @@ def call_model(settings: Settings, prompt: str) -> str:
     if not text:
         raise LetterError("The model returned an empty letter")
     return text
+
+
+# An em or en dash with whatever spacing the model put around it.
+_DASH = re.compile(r"\s*[—–]\s*")
+
+
+def plain_dashes(text: str) -> str:
+    """Replace em and en dashes with ordinary punctuation.
+
+    The prompt asks for this and mostly gets it, but "mostly" is the wrong
+    standard for something the author will read every line of: one stray dash
+    in a letter is exactly the tell that it was not typed by a person. So the
+    rule is enforced here as well, where it cannot be talked out of.
+
+    A dash between two words becomes a comma, which is what it was standing in
+    for. Between two digits it becomes a hyphen, because "2026-2027" and
+    "250-350" are ranges rather than clauses and a comma there is nonsense.
+    Next to punctuation it becomes a space, since ", ," reads worse than the
+    dash did.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        start, end = match.span()
+        before = text[start - 1] if start else ""
+        after = text[end] if end < len(text) else ""
+        if before.isdigit() and after.isdigit():
+            return "-"
+        if before.isalnum() and after.isalnum():
+            return ", "
+        return " " if before and after else ""
+
+    return re.sub(r" +", " ", _DASH.sub(replace, text)).strip()
 
 
 def letter_path(settings: Settings, posting_id: str) -> Path:
@@ -268,7 +313,7 @@ def draft_letter(posting_id: str, k: int = DEFAULT_PROFILE_CHUNKS) -> Letter:
     posting = Posting.from_row(row)
 
     hits = find_grounding(posting, k=k)
-    text = call_model(settings, build_prompt(posting, hits))
+    text = plain_dashes(call_model(settings, build_prompt(posting, hits)))
 
     path = letter_path(settings, posting_id)
     path.write_text(text, encoding="utf-8")
@@ -357,7 +402,9 @@ def revise_letter(
         raise LetterError("There is no letter to revise yet; draft one first")
 
     hits = find_grounding(posting, k=k)
-    text = call_model(settings, build_revision_prompt(posting, hits, current or "", instruction))
+    text = plain_dashes(
+        call_model(settings, build_revision_prompt(posting, hits, current or "", instruction))
+    )
 
     path = letter_path(settings, posting_id)
     path.write_text(text, encoding="utf-8")
