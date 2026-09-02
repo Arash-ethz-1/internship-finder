@@ -32,7 +32,6 @@
      signal accent. */
   --status-found: #a3a7ad; /* neutral: a search surfaced it, you have not looked */
   --status-interested: #7a6e9e; /* indigo: on your radar */
-  --status-ready-to-submit: var(--signal); /* the one action state */
   --status-applied: #3e7ca6; /* blue: it is out of your hands */
   --status-interviewing: #b07d2b; /* amber: in progress */
   --status-offer: #4c8c3f; /* green: good news */
@@ -124,7 +123,6 @@
 
   --color-status-found: var(--status-found);
   --color-status-interested: var(--status-interested);
-  --color-status-ready-to-submit: var(--status-ready-to-submit);
   --color-status-applied: var(--status-applied);
   --color-status-interviewing: var(--status-interviewing);
   --color-status-offer: var(--status-offer);

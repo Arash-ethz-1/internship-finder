@@ -26,7 +26,6 @@ import { StatusDot } from "./status";
  *  could be about. */
 const ACTIONS: { status: Status; label: string }[] = [
   { status: "interested", label: "keep" },
-  { status: "ready_to_submit", label: "ready to apply" },
   { status: "applied", label: "applied" },
   { status: "not_relevant", label: "not for me" },
 ];

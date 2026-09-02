@@ -41,11 +41,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 // --- types -----------------------------------------------------------------
 
+/**
+ * `ready_to_submit` was removed on 2026-09-02: it described intent rather than
+ * a state of the world, and "interested, not yet sent" already covered it.
+ * The letter-is-written case it stood for is a filter, not a status.
+ */
 export const STATUSES = [
   "found",
   "not_relevant",
   "interested",
-  "ready_to_submit",
   "applied",
   "rejected",
   "interviewing",
@@ -58,7 +62,42 @@ export type Status = (typeof STATUSES)[number];
 export type StatusOrUntriaged = Status | "untriaged";
 
 export type Level = "intern" | "newgrad" | "unknown";
-export type Source = "greenhouse" | "lever" | "ashby";
+/** `manual` is not a board: it is a posting typed in by hand. */
+export type Source =
+  | "greenhouse"
+  | "lever"
+  | "ashby"
+  | "personio"
+  | "manual";
+
+export const REGIONS = [
+  "europe",
+  "north_america",
+  "south_america",
+  "asia",
+  "middle_east",
+  "africa",
+  "oceania",
+] as const;
+
+export type Region = (typeof REGIONS)[number];
+
+/**
+ * One resolved location on a posting. `raw` is always the board's own words,
+ * so a place the parser could not resolve is still shown rather than missing.
+ */
+export interface Place {
+  raw: string;
+  city: string | null;
+  country: string | null;
+  region: string | null;
+}
+
+/** How to label a place: the most specific thing known about it. */
+export function placeLabel(place: Place): string {
+  if (place.city && place.country) return `${place.city}, ${place.country}`;
+  return place.city ?? place.country ?? place.raw;
+}
 
 export interface PostingSummary {
   id: string;
@@ -73,7 +112,10 @@ export interface PostingSummary {
   level: string;
   first_seen: string;
   last_seen: string;
+  /** When the board stopped listing it. Null means still open. Never deleted. */
+  closed_at: string | null;
   status: StatusOrUntriaged;
+  places: Place[];
 }
 
 export interface StatusChange {
@@ -97,11 +139,27 @@ export interface PostingPage {
   offset: number;
 }
 
+export interface RegionOption {
+  id: string;
+  name: string;
+  count: number;
+}
+
+export interface CountryOption {
+  code: string;
+  name: string;
+  region: string;
+  count: number;
+}
+
 export interface FilterOptions {
   companies: string[];
   levels: string[];
   sources: string[];
   statuses: string[];
+  /** Counted, so a country with two postings does not look like one with 900. */
+  regions: RegionOption[];
+  countries: CountryOption[];
 }
 
 export interface ApplicationState {
@@ -215,10 +273,70 @@ export interface PostingQuery {
   /** Any number of statuses, OR-ed. Empty or absent means no constraint. */
   status?: string[];
   posted_after?: string;
+  /** ISO 3166-1 alpha-2. Matches if *any* of a posting's places match. */
+  country?: string;
+  region?: string;
+  /** Closed postings are hidden by default: the grid is what you can apply to. */
+  include_closed?: boolean;
+  only_closed?: boolean;
   sort?: string;
   descending?: boolean;
   limit?: number;
   offset?: number;
+}
+
+/** Creating or editing a posting entered by hand. */
+export interface ManualPostingBody {
+  company: string;
+  title: string;
+  url: string;
+  body?: string;
+  location?: string | null;
+  posted_at?: string | null;
+  deadline?: string | null;
+  level?: Level | null;
+  remote?: boolean | null;
+}
+
+export interface ProfileSummary {
+  slug: string;
+  title: string;
+  bytes: number;
+  chunks: number;
+  /** Chunking is immediate; embedding waits for `cli embed`. Both are shown so
+   *  the person can tell keyword-searchable from meaning-searchable. */
+  embedded: number;
+  ingested: boolean;
+}
+
+export interface ProfileDoc extends ProfileSummary {
+  text: string;
+}
+
+export interface ProfileList {
+  documents: ProfileSummary[];
+  pending_embedding: number;
+}
+
+export interface SyncStatus {
+  status: "idle" | "running" | "done" | "error";
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  report: {
+    since: string | null;
+    found: number;
+    already_seen: number;
+    fetched: number;
+    matched: number;
+    unmatched: number;
+    suggestions: number;
+    by_label: Record<string, number>;
+    skipped_reason: string | null;
+  } | null;
+  /** Whether Gmail has been connected at all. Without it, "nothing happened"
+   *  has a setup answer rather than being a failure. */
+  authorised: boolean;
 }
 
 // --- calls -----------------------------------------------------------------
@@ -296,6 +414,99 @@ export function setStatusBulk(
 export function draftLetter(id: string): Promise<LetterResponse> {
   return request<LetterResponse>(`/api/letters/${encodeURIComponent(id)}`, {
     method: "POST",
+  });
+}
+
+/**
+ * Apply one instruction to an existing draft.
+ *
+ * `letter` is the editor's current contents rather than what is on disk: the
+ * person may have edited the draft by hand before asking for a change, and
+ * revising the saved copy would throw that away without saying so.
+ */
+export function reviseLetter(
+  id: string,
+  instruction: string,
+  letter: string,
+): Promise<LetterResponse> {
+  return request<LetterResponse>(
+    `/api/letters/${encodeURIComponent(id)}/revise`,
+    { method: "POST", body: JSON.stringify({ instruction, letter }) },
+  );
+}
+
+// --- postings you enter yourself -------------------------------------------
+
+export function createPosting(
+  body: ManualPostingBody,
+): Promise<PostingDetail> {
+  return request<PostingDetail>("/api/postings", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function updatePosting(
+  id: string,
+  body: ManualPostingBody,
+): Promise<PostingDetail> {
+  return request<PostingDetail>(`/api/postings/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deletePosting(id: string): Promise<void> {
+  const response = await fetch(
+    `${BASE_URL}/api/postings/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  );
+  // 204, so there is no body to parse — `request` would choke on it.
+  if (!response.ok) throw new ApiError(response.status, response.statusText);
+}
+
+// --- the profile corpus ----------------------------------------------------
+
+export function getProfile(): Promise<ProfileList> {
+  return request<ProfileList>("/api/profile");
+}
+
+export function getProfileDoc(slug: string): Promise<ProfileDoc> {
+  return request<ProfileDoc>(`/api/profile/${encodeURIComponent(slug)}`);
+}
+
+/** Saving rewrites the file and re-chunks it in the same request, so the
+ *  letters can never be grounded in text that has since been edited. */
+export function saveProfileDoc(
+  slug: string,
+  text: string,
+): Promise<ProfileDoc> {
+  return request<ProfileDoc>(`/api/profile/${encodeURIComponent(slug)}`, {
+    method: "PUT",
+    body: JSON.stringify({ text }),
+  });
+}
+
+export async function deleteProfileDoc(slug: string): Promise<void> {
+  const response = await fetch(
+    `${BASE_URL}/api/profile/${encodeURIComponent(slug)}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) throw new ApiError(response.status, response.statusText);
+}
+
+// --- the mailbox sync ------------------------------------------------------
+
+export function getSyncStatus(): Promise<SyncStatus> {
+  return request<SyncStatus>("/api/inbox/sync");
+}
+
+/** Start a sync. Returns immediately with 202 — poll `getSyncStatus` for the
+ *  rest. Still only ever writes suggestions; accepting one stays separate. */
+export function startSync(includeSent = false): Promise<SyncStatus> {
+  return request<SyncStatus>("/api/inbox/sync", {
+    method: "POST",
+    body: JSON.stringify({ include_sent: includeSent }),
   });
 }
 

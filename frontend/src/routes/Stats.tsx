@@ -12,7 +12,6 @@ import { STATUS_LABELS, statusStyle } from "../components/status";
 const ORDER = [
   "untriaged",
   "interested",
-  "ready_to_submit",
   "applied",
   "interviewing",
   "offer",

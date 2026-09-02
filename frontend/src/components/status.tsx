@@ -35,10 +35,6 @@ const STYLES: Record<
     dot: "bg-status-interested",
     chip: "border-status-interested/50 bg-status-interested/10 text-status-interested",
   },
-  ready_to_submit: {
-    dot: "bg-status-ready-to-submit",
-    chip: "border-signal/50 bg-signal/10 text-signal",
-  },
   applied: {
     dot: "bg-status-applied",
     chip: "border-status-applied/50 bg-status-applied/10 text-status-applied",
@@ -69,7 +65,6 @@ export const STATUS_LABELS: Record<string, string> = {
   found: "found",
   not_relevant: "not for me",
   interested: "interested",
-  ready_to_submit: "ready",
   applied: "applied",
   interviewing: "interview",
   offer: "offer",
@@ -77,11 +72,14 @@ export const STATUS_LABELS: Record<string, string> = {
   declined: "declined",
 };
 
-/** `1`-`6` set these, in this order. `declined` and `not_relevant` are
- *  deliberately not bound — six keys is the design; set them from the panel. */
+/** `1`-`5` set these, in this order. `declined` and `not_relevant` are
+ *  deliberately not bound — set them from the panel.
+ *
+ *  This was six keys until `ready_to_submit` was retired on 2026-09-02. The
+ *  order is otherwise unchanged, so the muscle memory for `1` (interested) and
+ *  the ones after it shifts by one only past that point. */
 export const STATUS_KEYS = [
   "interested",
-  "ready_to_submit",
   "applied",
   "interviewing",
   "offer",

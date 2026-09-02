@@ -271,17 +271,22 @@ def test_list_shortlist(conn: sqlite3.Connection) -> None:
 def test_tool_functions_match_the_schemas() -> None:
     schema_names = {s["name"] for s in tools.TOOL_SCHEMAS}
     assert schema_names == set(tools.TOOL_FUNCTIONS)
-    # Four from plan.md, plus `find_postings` added 2026-09-01 for the list
-    # the dashboard renders. Every tool the model can reach is one more thing
-    # that can go wrong, so the count is asserted rather than left to drift.
-    assert len(schema_names) == 5
+    # plan.md named four. `find_postings` was added 2026-09-01 for the list the
+    # dashboard renders, and `search_postings` was dropped 2026-09-02 -- two
+    # search tools with synonymous names is the worst case for a model choosing
+    # between them from descriptions alone, and picking wrong meant results
+    # were never recorded as `found` and so were offered again forever. Every
+    # tool the model can reach is one more thing that can go wrong, so the
+    # count is asserted rather than left to drift.
+    assert len(schema_names) == 4
+    assert "search_postings" not in schema_names
 
 
-def test_search_postings_over_an_empty_index_returns_nothing(conn: sqlite3.Connection) -> None:
+def test_find_postings_over_an_empty_index_returns_nothing(conn: sqlite3.Connection) -> None:
     # No chunks means no candidates, so the tool answers "nothing found"
     # without ever reaching the embedding provider — which is what lets the
     # agent run against a fresh database with no API key.
-    assert tools.search_postings("machine learning") == []
+    assert tools.find_postings("machine learning") == []
 
 
 # --- eval set --------------------------------------------------------------

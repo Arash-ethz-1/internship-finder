@@ -14,6 +14,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from ..config import get_settings
 from ..inbox import (
     InboxError,
     accept_suggestion,
@@ -21,8 +22,16 @@ from ..inbox import (
     list_suggestions,
     pending_count,
 )
+from ..inbox.job import JOB
 from ..runtime import get_db
-from .schemas import ApplicationState, InboxAccept, InboxPage, InboxSuggestion
+from .schemas import (
+    ApplicationState,
+    InboxAccept,
+    InboxPage,
+    InboxSuggestion,
+    SyncRequest,
+    SyncStatus,
+)
 
 router = APIRouter(prefix="/api", tags=["inbox"])
 
@@ -105,3 +114,50 @@ def post_dismiss(conn: Conn, match_id: int) -> InboxSuggestion:
         (match_id,),
     ).fetchone()
     return InboxSuggestion(**dict(row))
+
+
+@router.get("/inbox/sync", response_model=SyncStatus)
+def get_sync_status() -> SyncStatus:
+    """Whether a mailbox sync is running, and what the last one did.
+
+    Polled by the dashboard while a sync is going. Deliberately cheap and
+    never blocking: reading this must not wait behind a run that is currently
+    talking to Gmail.
+    """
+    return SyncStatus(**JOB.state.to_dict(), authorised=_is_authorised())
+
+
+@router.post("/inbox/sync", response_model=SyncStatus, status_code=202)
+def post_sync(request: SyncRequest | None = None) -> SyncStatus:
+    """Start a mailbox sync in the background.
+
+    202, not 200: the work has been accepted and is not done. The response is
+    the job state, and the dashboard polls `GET /api/inbox/sync` for the rest.
+    Nothing here holds the request open, which was the whole objection to
+    having this route at all.
+
+    A sync still only ever writes suggestions. `applications` is untouched,
+    and accepting one remains a separate, deliberate act.
+    """
+    body = request or SyncRequest()
+    if not _is_authorised():
+        raise HTTPException(
+            409,
+            "Gmail is not authorised yet. Run: uv run python -m agent_app.cli "
+            "sync-email --login",
+        )
+    try:
+        state = JOB.start(include_sent=body.include_sent, limit=body.limit)
+    except InboxError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return SyncStatus(**state.to_dict(), authorised=True)
+
+
+def _is_authorised() -> bool:
+    """Is there a stored refresh token to sync with.
+
+    Checked before starting rather than discovered inside the job, so "you have
+    not connected Gmail" is an immediate, actionable answer instead of a failed
+    run the person has to go and read.
+    """
+    return get_settings().gmail_token_path.exists()

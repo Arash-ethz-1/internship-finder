@@ -16,13 +16,27 @@ StatusLiteral = Literal[
     "found",
     "not_relevant",
     "interested",
-    "ready_to_submit",
     "applied",
     "rejected",
     "interviewing",
     "offer",
     "declined",
 ]
+
+LevelLiteral = Literal["intern", "newgrad", "unknown"]
+
+
+class Place(BaseModel):
+    """One resolved location on a posting.
+
+    `raw` is always the board's own words, so a place the parser could not
+    resolve is still shown rather than silently missing.
+    """
+
+    raw: str
+    city: str | None = None
+    country: str | None = None
+    region: str | None = None
 
 
 class PostingSummary(BaseModel):
@@ -40,7 +54,11 @@ class PostingSummary(BaseModel):
     level: str
     first_seen: str
     last_seen: str
+    # When the board stopped listing it. Null means still open. The row is
+    # never deleted, so this is how the grid tells "gone" from "not there".
+    closed_at: str | None = None
     status: str = "untriaged"
+    places: list[Place] = Field(default_factory=list)
 
 
 class StatusChange(BaseModel):
@@ -70,6 +88,23 @@ class PostingPage(BaseModel):
     offset: int
 
 
+class CountryOption(BaseModel):
+    """One country the corpus actually contains, with how many postings."""
+
+    code: str
+    name: str
+    region: str
+    count: int
+
+
+class RegionOption(BaseModel):
+    """One region the corpus actually contains."""
+
+    id: str
+    name: str
+    count: int
+
+
 class FilterOptions(BaseModel):
     """What the left rail offers, derived from the data actually present."""
 
@@ -77,6 +112,11 @@ class FilterOptions(BaseModel):
     levels: list[str] = Field(default_factory=lambda: list(LEVELS))
     sources: list[str] = Field(default_factory=lambda: list(SOURCES))
     statuses: list[str] = Field(default_factory=lambda: ["tracked", "untriaged", *STATUSES])
+    # Places are offered as counted options rather than a bare list: a country
+    # holding two postings and one holding nine hundred should not look alike
+    # in a filter rail.
+    regions: list[RegionOption] = Field(default_factory=list)
+    countries: list[CountryOption] = Field(default_factory=list)
 
 
 class ApplicationUpdate(BaseModel):
@@ -156,6 +196,19 @@ class SearchHitModel(BaseModel):
     component_scores: dict[str, float]
 
 
+class LetterRevision(BaseModel):
+    """POST body for revising a draft.
+
+    `letter` is the editor's current contents. It is sent rather than read from
+    disk because the person may have edited the draft by hand before asking for
+    a change, and revising the saved copy would throw that away without saying
+    so.
+    """
+
+    instruction: str = Field(min_length=1, max_length=2000)
+    letter: str | None = None
+
+
 class LetterResponse(BaseModel):
     """A drafted letter beside the profile chunks it was grounded in."""
 
@@ -164,6 +217,26 @@ class LetterResponse(BaseModel):
     path: str
     grounding: list[SearchHitModel]
     todos: list[str]
+
+
+class ManualPostingBody(BaseModel):
+    """Creating or editing a posting you entered yourself.
+
+    Only `company`, `title` and `url` are required, for the same reason a board
+    posting needs them: without them the row cannot be linked to or read.
+    Everything else is optional, and `level` is inferred from the title when it
+    is not given.
+    """
+
+    company: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=300)
+    url: str = Field(min_length=1, max_length=2000)
+    body: str = ""
+    location: str | None = None
+    posted_at: str | None = None
+    deadline: str | None = None
+    level: LevelLiteral | None = None
+    remote: bool | None = None
 
 
 class InboxSuggestion(BaseModel):
@@ -222,3 +295,61 @@ class ChatRequest(BaseModel):
 class Health(BaseModel):
     status: str
     version: str
+
+
+class ProfileSummary(BaseModel):
+    """One project write-up, as the list shows it."""
+
+    slug: str
+    title: str
+    bytes: int
+    chunks: int
+    # How many of those chunks have a vector. Chunking is free and immediate;
+    # embedding is the step that costs, so a freshly saved document is
+    # searchable by keyword before it is searchable by meaning. Showing both
+    # numbers is how the person can tell which.
+    embedded: int
+    ingested: bool
+
+
+class ProfileDoc(ProfileSummary):
+    """One write-up with its text. `bytes` is derived, so it is not required."""
+
+    text: str
+    bytes: int = 0
+
+
+class ProfileDocBody(BaseModel):
+    """PUT body for saving a write-up."""
+
+    text: str = Field(max_length=200_000)
+
+
+class ProfileList(BaseModel):
+    """Every write-up, plus how much of the corpus is waiting on `cli embed`."""
+
+    documents: list[ProfileSummary]
+    pending_embedding: int = 0
+
+
+class SyncRequest(BaseModel):
+    """POST body for starting a mailbox sync."""
+
+    # Lifts the `-from:me` exclusion. That exclusion exists so your own
+    # application to a company is never read as that company's answer to it,
+    # so this is for testing with a single mailbox and defaults to off.
+    include_sent: bool = False
+    limit: int | None = Field(default=None, ge=1, le=500)
+
+
+class SyncStatus(BaseModel):
+    """Whether a sync is running, and what the last one did."""
+
+    status: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    error: str | None = None
+    report: dict[str, Any] | None = None
+    # Whether there is a stored refresh token at all. Without it the answer to
+    # "why did nothing happen" is a setup step, not a failure.
+    authorised: bool = False

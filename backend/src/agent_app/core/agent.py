@@ -5,7 +5,7 @@ Category A and complete — the API and the CLI both read them.
 
 The whole concept in one paragraph: you send the model a question plus a list
 of tools. It replies either with a final answer or with "call
-``search_postings`` with these arguments". You run the tool, send the result
+``find_postings`` with these arguments". You run the tool, send the result
 back, and it decides again. Repeat until it answers or you hit ``max_iters``.
 That loop is what an "AI agent" is; everything else is plumbing.
 

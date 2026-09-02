@@ -597,6 +597,68 @@ def stats(conn: sqlite3.Connection, recent_days: int = 30) -> dict[str, Any]:
     }
 
 
+def places_for(
+    conn: sqlite3.Connection, posting_ids: list[str]
+) -> dict[str, list[dict[str, Any]]]:
+    """Every posting's resolved locations, in one query.
+
+    The grid asks for five hundred rows at a time, so a query per row is the
+    difference between one round trip and five hundred. The sentinel rows that
+    :mod:`agent_app.ingest.locations` writes for a placeless posting are
+    filtered out here rather than stored differently: they exist to mark the
+    posting as examined, not to be shown.
+    """
+    if not posting_ids:
+        return {}
+
+    out: dict[str, list[dict[str, Any]]] = {}
+    # SQLite caps host parameters, so page through rather than assuming the
+    # caller's limit is small enough.
+    for start in range(0, len(posting_ids), 400):
+        window = posting_ids[start : start + 400]
+        marks = ",".join("?" * len(window))
+        for row in conn.execute(
+            f"SELECT posting_id, raw, city, country, region FROM posting_locations "
+            f"WHERE posting_id IN ({marks}) AND raw != '' ORDER BY id",
+            window,
+        ):
+            out.setdefault(row["posting_id"], []).append(
+                {
+                    "raw": row["raw"],
+                    "city": row["city"],
+                    "country": row["country"],
+                    "region": row["region"],
+                }
+            )
+    return out
+
+
+def place_options(
+    conn: sqlite3.Connection,
+) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
+    """Regions and countries the corpus actually holds, with posting counts.
+
+    Counts are of distinct *postings*, not location rows: a posting offered in
+    Zurich and Geneva is one Swiss posting, and counting it twice would make
+    the rail lie about how much there is to look at.
+    """
+    regions = [
+        (row["region"], row["n"])
+        for row in conn.execute(
+            "SELECT region, count(DISTINCT posting_id) AS n FROM posting_locations "
+            "WHERE region IS NOT NULL GROUP BY region ORDER BY n DESC"
+        )
+    ]
+    countries = [
+        (row["country"], row["n"])
+        for row in conn.execute(
+            "SELECT country, count(DISTINCT posting_id) AS n FROM posting_locations "
+            "WHERE country IS NOT NULL GROUP BY country ORDER BY n DESC"
+        )
+    ]
+    return (regions, countries)
+
+
 def distinct_values(conn: sqlite3.Connection, column: str) -> list[str]:
     """Distinct non-null values of one filterable column, for the left rail."""
     if column not in {"company", "level", "source", "location"}:

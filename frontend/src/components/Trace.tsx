@@ -97,7 +97,7 @@ export function reduceEvents(events: AgentEvent[]): {
 }
 
 /** `find_postings` returns whole postings; a posting_id with no chunk_id is
- *  what tells them apart from the chunk hits `search_postings` returns. */
+ *  what tells them apart from the raw chunk hits retrieval returns. */
 function postingsFrom(output: unknown): FoundPosting[] {
   if (!Array.isArray(output)) return [];
   return output.filter(

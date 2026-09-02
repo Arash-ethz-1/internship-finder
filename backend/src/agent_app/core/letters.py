@@ -78,6 +78,54 @@ something I wrote about work I actually did.
 Draft the motivational letter."""
 
 
+REVISE_SYSTEM_PROMPT = """You revise motivational letters for internship applications, following \
+one instruction from the applicant.
+
+You will be given the current letter, the job posting, and the same verbatim extracts from the \
+applicant's own project write-ups that the letter was drafted from. Those extracts are still the \
+ONLY facts you know about the applicant.
+
+Rules, in order of importance:
+
+1. Do what the instruction asks, and nothing else. If it says make it shorter, do not also \
+change the tone. An unrequested improvement is a regression: the applicant has read this letter \
+and is asking for one change to it.
+2. Never invent a detail, even to fill a gap your edit opens. Every claim about the applicant \
+must still be traceable to an extract. Keep any [TODO: ...] marker that is still unanswered, and \
+add a new one rather than inventing a fact.
+3. Preserve the concrete specifics -- project names, technologies, what was actually built. When \
+shortening, cut adjectives, throat-clearing and restatements of the job description first. The \
+specifics are what make the letter worth sending.
+4. Keep the register: sober, concrete, no "thrilled to apply".
+
+Return only the revised letter body. No commentary on what you changed, no subject line, no \
+signature block."""
+
+REVISE_USER_PROMPT = """# The role
+
+Company: {company}
+Title: {title}
+Location: {location}
+
+{body}
+
+# Extracts from my own project write-ups
+
+These are still the only facts you have about me.
+
+{extracts}
+
+# The current letter
+
+{letter}
+
+# What I want changed
+
+{instruction}
+
+Return the revised letter."""
+
+
 class LetterError(RuntimeError):
     """Drafting could not be completed, and something about the input is why.
 
@@ -251,6 +299,75 @@ def draft_letter(posting_id: str, k: int = DEFAULT_PROFILE_CHUNKS) -> Letter:
                 "VALUES (?, NULL, 'interested', 'drafted a letter', ?)",
                 (posting_id, now),
             )
+
+    return Letter(posting_id=posting_id, text=text, path=path, grounding=hits, todos=todos)
+
+
+def build_revision_prompt(
+    posting: Posting, hits: list[SearchHit], letter: str, instruction: str
+) -> str:
+    """Assemble the prompt for one revision.
+
+    The grounding extracts go back in unchanged. A revision that could not see
+    them would have nothing to check a claim against, so "make it shorter"
+    would be free to shorten by inventing a crisper fact.
+    """
+    return REVISE_USER_PROMPT.format(
+        company=posting.company,
+        title=posting.title,
+        location=posting.location or "not stated",
+        body=posting.body[:MAX_POSTING_CHARS],
+        extracts=format_extracts(hits),
+        letter=letter.strip(),
+        instruction=instruction.strip(),
+    )
+
+
+def revise_letter(
+    posting_id: str,
+    instruction: str,
+    letter: str | None = None,
+    k: int = DEFAULT_PROFILE_CHUNKS,
+) -> Letter:
+    """Apply one instruction to an existing draft.
+
+    ``letter`` is the text to revise, which is the editor's current contents
+    rather than what is on disk -- the person may have edited it by hand
+    before asking for a change, and revising the saved version would silently
+    throw that away. It falls back to the file when not given.
+
+    Regenerating from scratch was the only option before this, and it is the
+    wrong shape for the job: "make it shorter" is a change to *this* letter,
+    not a request for a different one.
+    """
+    if not instruction.strip():
+        raise LetterError("A revision needs an instruction saying what to change")
+
+    settings = get_settings()
+    settings.ensure_dirs()
+    conn = get_db()
+
+    row = conn.execute("SELECT * FROM postings WHERE id = ?", (posting_id,)).fetchone()
+    if row is None:
+        raise KeyError(f"No posting with id {posting_id!r}")
+    posting = Posting.from_row(row)
+
+    current = letter if letter is not None else read_letter(posting_id)
+    if not (current or "").strip():
+        raise LetterError("There is no letter to revise yet; draft one first")
+
+    hits = find_grounding(posting, k=k)
+    text = call_model(settings, build_revision_prompt(posting, hits, current or "", instruction))
+
+    path = letter_path(settings, posting_id)
+    path.write_text(text, encoding="utf-8")
+
+    todos = TODO_PATTERN.findall(text)
+    with conn:
+        conn.execute(
+            "UPDATE applications SET letter_path = ?, updated_at = ? WHERE posting_id = ?",
+            (str(path), now_iso(), posting_id),
+        )
 
     return Letter(posting_id=posting_id, text=text, path=path, grounding=hits, todos=todos)
 

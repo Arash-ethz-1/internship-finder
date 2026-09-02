@@ -74,7 +74,6 @@ export const STATUS_CHOICES = [
   "untriaged",
   "found",
   "interested",
-  "ready_to_submit",
   "applied",
   "interviewing",
   "offer",

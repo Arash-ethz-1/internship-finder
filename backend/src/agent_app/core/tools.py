@@ -49,17 +49,6 @@ def _posting_dict(posting: Posting, *, include_body: bool = False) -> dict[str, 
 # --- the four tools --------------------------------------------------------
 
 
-def search_postings(query: str, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    """Hybrid search over posting chunks.
-
-    Thin wrapper over :func:`agent_app.core.retrieval.search`, which is
-    Category B — this will raise ``NotImplementedError`` until that is written.
-    """
-    parsed = SearchFilters.from_dict(filters)
-    hits = retrieval.search(query, parsed)
-    return [hit.to_dict() for hit in hits]
-
-
 DEFAULT_FIND_LIMIT = 30
 
 # How many chunk hits to ask for per posting wanted. Hits are chunks and this
@@ -75,10 +64,16 @@ def find_postings(
 ) -> list[dict[str, Any]]:
     """Build a working list of postings for the person to act on.
 
-    The difference from :func:`search_postings` is what comes back and what it
-    is for. ``search_postings`` returns chunk excerpts so the *model* can read
-    them; this returns whole postings, deduplicated and capped, so the *person*
-    gets a list they can select from and act on.
+    Whole postings, deduplicated and capped, so the person gets a list they can
+    select from and act on -- rather than chunk excerpts, which is what the
+    retrieval layer returns underneath.
+
+    This was one of two search tools until 2026-09-02. The other,
+    ``search_postings``, returned excerpts for the model to read. Two tools
+    with synonymous names is the worst case for a model that has to choose
+    between them from the descriptions alone, and choosing wrong meant results
+    were never recorded as ``found`` and so were offered again forever. Where
+    the model genuinely needs a posting's text it calls :func:`get_posting`.
 
     Two rules make the list usable across several searches:
 
@@ -317,61 +312,14 @@ def list_shortlist(status: str | None = None) -> list[dict[str, Any]]:
 
 TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
-        "name": "search_postings",
-        "description": (
-            "Find job postings by meaning and by keyword, over the text of the postings "
-            "themselves. Use this whenever the question is about which postings exist — "
-            "'any ML internships in Zurich', 'who is hiring for Rust' — or when you have "
-            "no posting_id yet. Returns the matching excerpt from each posting with its "
-            "posting_id and a relevance score, best first, not the full posting: follow "
-            "up with get_posting when you need the whole body, the deadline, or the "
-            "current application status. Searching is cheap; guessing is not. If the "
-            "first query returns nothing useful, try again with different words before "
-            "concluding that nothing matches."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": (
-                        "What to look for, in natural language. Describe the role the "
-                        "way a posting would ('machine learning internship, PyTorch') "
-                        "rather than as a command ('find me an ML job'). Put attributes "
-                        "that have their own filter — company, city, level — in filters "
-                        "instead, and keep this to the subject matter."
-                    ),
-                },
-                "filters": {
-                    "type": "object",
-                    "description": (
-                        "Hard constraints applied before scoring. Everything here is an "
-                        "exact match, so use it only for what the person actually asked "
-                        "for: a filter that is merely a good guess silently hides "
-                        "postings they wanted to see."
-                    ),
-                    "properties": {
-                        "company": {"type": "string"},
-                        "level": {"type": "string", "enum": ["intern", "newgrad", "unknown"]},
-                        "location": {"type": "string"},
-                        "remote": {"type": "boolean"},
-                        "status": {"type": "string", "enum": [*STATUSES, "untriaged"]},
-                        "posted_after": {"type": "string"},
-                    },
-                },
-            },
-            "required": ["query"],
-        },
-    },
-    {
         "name": "find_postings",
         "description": (
             "Build the person's working list: up to 30 whole postings matching what they "
             "are looking for, shown to them as a list they can select from, open, and "
             "change the status of. Use this whenever they are asking to be shown jobs "
             "rather than asking a question about jobs — 'find me ML research internships "
-            "in Zurich', 'show me quant roles'. Prefer it over search_postings for any "
-            "request phrased as a search. Postings already in the pipeline are excluded "
+            "in Zurich', 'show me quant roles'. This is the only way to search; there is "
+            "no other. Postings already in the pipeline are excluded "
             "automatically, so a second search never returns the same posting twice, and "
             "everything returned is remembered. Do not list the results back in prose: "
             "the person is already looking at them. Say how many came back and what they "
@@ -494,7 +442,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "List every posting that already has an application status, newest change "
             "first, optionally narrowed to one status. This is the person's pipeline — "
             "use it for questions about what they are tracking ('what have I applied "
-            "to', 'anything still just interested?') rather than search_postings, which "
+            "to', 'anything still just interested?') rather than find_postings, which "
             "searches all postings including the thousands never triaged. Returns the "
             "posting summary plus its status and note, without the body."
         ),
@@ -519,7 +467,6 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
 # Name to callable. `run_agent` dispatches through this.
 TOOL_FUNCTIONS: dict[str, Any] = {
     "find_postings": find_postings,
-    "search_postings": search_postings,
     "get_posting": get_posting,
     "update_status": update_status,
     "list_shortlist": list_shortlist,
