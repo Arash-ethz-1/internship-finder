@@ -53,3 +53,11 @@ def settings() -> Settings:
 def conn() -> sqlite3.Connection:
     """An initialised connection to the throwaway database."""
     return runtime.get_db()
+
+
+@pytest.fixture
+def profile_dir() -> Path:
+    """The throwaway ``profile/`` folder, created and empty."""
+    directory = get_settings().profile_dir
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory

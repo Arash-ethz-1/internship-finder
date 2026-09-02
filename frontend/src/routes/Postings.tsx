@@ -11,11 +11,13 @@ import {
   getFilters,
   getPostings,
   getStats,
+  placeLabel,
   setStatus,
   type PostingQuery,
   type PostingSummary,
   type Status,
 } from "../api/client";
+import { NewPostingDialog } from "../components/NewPostingDialog";
 import { DetailPanel } from "../components/DetailPanel";
 import { ON_MY_LIST, Rail, STATUS_CHOICES } from "../components/Rail";
 import { EmptyState, ErrorState, LoadingState } from "../components/states";
@@ -67,6 +69,7 @@ export function Postings() {
   }));
   const [cursor, setCursor] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const postings = useQuery({
@@ -243,12 +246,26 @@ export function Postings() {
           </div>
         )}
 
-        <div className="shrink-0 border-t border-hairline px-3 py-1.5 font-mono text-2xs text-text-faint">
-          j/k move · enter open · 1-6 status · esc close
+        <div className="flex shrink-0 items-center justify-between border-t border-hairline px-3 py-1.5 font-mono text-2xs text-text-faint">
+          <span>j/k move · enter open · 1-5 status · esc close</span>
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className="text-text-muted hover:text-signal"
+          >
+            + add a posting
+          </button>
         </div>
       </main>
 
       {openId && <DetailPanel id={openId} onClose={() => setOpenId(null)} />}
+
+      {adding && (
+        <NewPostingDialog
+          onClose={() => setAdding(false)}
+          onCreated={setOpenId}
+        />
+      )}
     </div>
   );
 }
@@ -296,8 +313,17 @@ function Row({
       <span className="truncate">{row.title}</span>
       {!compact && (
         <>
-          <span className="truncate font-mono text-text-muted">
-            {row.remote ? "remote" : (row.location ?? "—")}
+          <span
+            className="truncate font-mono text-text-muted"
+            // The parsed places, falling back to whatever the board wrote. A
+            // posting offered in two cities says both rather than picking one.
+            title={row.location ?? undefined}
+          >
+            {row.places.length > 0
+              ? row.places.map(placeLabel).join(" · ")
+              : row.remote
+                ? "remote"
+                : (row.location ?? "—")}
           </span>
           <span className="font-mono text-text-muted">{row.level}</span>
           <span className="font-mono tabular-nums text-text-muted">
@@ -306,7 +332,15 @@ function Row({
         </>
       )}
       <span className="truncate font-mono text-2xs text-text-muted">
-        {row.status === "untriaged" ? "" : row.status}
+        {/* A closed posting says so instead of its status: the fact that you
+            can no longer apply outranks what you had decided about it. */}
+        {row.closed_at ? (
+          <span className="text-status-rejected">closed</span>
+        ) : row.status === "untriaged" ? (
+          ""
+        ) : (
+          row.status
+        )}
       </span>
     </div>
   );

@@ -10,6 +10,7 @@ import {
   type Status,
 } from "../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../components/states";
+import { SyncControl } from "../components/SyncControl";
 import { STATUS_LABELS, StatusLabel } from "../components/status";
 
 /**
@@ -290,6 +291,7 @@ export function Inbox() {
     return (
       <div className="mx-auto h-full w-full max-w-4xl overflow-y-auto px-4 pt-6">
         <h1 className="text-lg font-medium">Inbox</h1>
+        <div className="mt-3"><SyncControl /></div>
         <div className="mt-3">{filters}</div>
         <p className="mt-6 max-w-prose text-xs text-text-muted">
           Nothing matches this filter. {data.pending} suggestion
@@ -329,6 +331,7 @@ export function Inbox() {
     <div className="mx-auto h-full w-full max-w-4xl overflow-y-auto">
       <div className="flex items-baseline gap-3 px-4 pt-6">
         <h1 className="text-lg font-medium">Inbox</h1>
+        <div className="mt-3"><SyncControl /></div>
         <span className="font-mono text-xs tabular-nums text-text-muted">
           {data.pending} waiting
         </span>

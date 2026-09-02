@@ -7,6 +7,7 @@ import { Chat } from "./routes/Chat";
 import { Inbox } from "./routes/Inbox";
 import { Letters } from "./routes/Letters";
 import { Postings } from "./routes/Postings";
+import { Profile } from "./routes/Profile";
 import { Stats } from "./routes/Stats";
 
 const queryClient = new QueryClient({
@@ -66,6 +67,9 @@ function Nav() {
           <span className="ml-1.5 tabular-nums text-signal">{inbox.pending}</span>
         )}
       </NavLink>
+      <NavLink to="/profile" className={link}>
+        profile
+      </NavLink>
       <NavLink to="/stats" className={link}>
         stats
       </NavLink>
@@ -94,6 +98,7 @@ export function App() {
               <Route path="/chat" element={<Chat />} />
               <Route path="/inbox" element={<Inbox />} />
               <Route path="/letters/:id" element={<Letters />} />
+              <Route path="/profile" element={<Profile />} />
               <Route path="/stats" element={<Stats />} />
               <Route
                 path="*"

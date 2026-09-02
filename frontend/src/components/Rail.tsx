@@ -207,6 +207,42 @@ export function Rail({
         ))}
       </Group>
 
+      {/* Region and country come from the parsed `posting_locations` table, so
+          they mean the same thing however the board spelled the place. The
+          free-text box below is still a substring match on the raw string —
+          it is the escape hatch for somewhere the parser does not know. */}
+      <Group label="region">
+        {(options?.regions ?? []).map((region) => (
+          <Radio
+            key={region.id}
+            name="region"
+            value={region.id}
+            current={query.region}
+            label={region.name}
+            count={region.count}
+            onChange={(v) => onChange({ region: v, country: undefined })}
+          />
+        ))}
+      </Group>
+
+      <Group label="country">
+        <div className="max-h-56 overflow-y-auto">
+          {(options?.countries ?? [])
+            .filter((c) => !query.region || c.region === query.region)
+            .map((country) => (
+              <Radio
+                key={country.code}
+                name="country"
+                value={country.code}
+                current={query.country}
+                label={country.name}
+                count={country.count}
+                onChange={(v) => onChange({ country: v })}
+              />
+            ))}
+        </div>
+      </Group>
+
       <Group label="location">
         <input
           type="text"
@@ -226,6 +262,40 @@ export function Rail({
             className="accent-signal"
           />
           remote only
+        </label>
+      </Group>
+
+      {/* Closed postings are hidden by default: the grid is a list of things
+          you could still apply to. They are never deleted, so this is how you
+          go and look at one you already applied to. */}
+      <Group label="on the board">
+        <label className="flex items-center gap-2 text-xs text-text-muted">
+          <input
+            type="checkbox"
+            checked={query.include_closed === true}
+            onChange={(e) =>
+              onChange({
+                include_closed: e.target.checked ? true : undefined,
+                only_closed: undefined,
+              })
+            }
+            className="accent-signal"
+          />
+          include closed
+        </label>
+        <label className="mt-1 flex items-center gap-2 text-xs text-text-muted">
+          <input
+            type="checkbox"
+            checked={query.only_closed === true}
+            onChange={(e) =>
+              onChange({
+                only_closed: e.target.checked ? true : undefined,
+                include_closed: undefined,
+              })
+            }
+            className="accent-signal"
+          />
+          closed only
         </label>
       </Group>
 
@@ -269,6 +339,10 @@ export function Rail({
               remote: undefined,
               source: undefined,
               company: undefined,
+              region: undefined,
+              country: undefined,
+              include_closed: undefined,
+              only_closed: undefined,
             })
           }
           className="text-xs text-text-faint underline-offset-2 hover:text-text hover:underline"

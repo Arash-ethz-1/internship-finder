@@ -143,8 +143,7 @@ def post_sync(request: SyncRequest | None = None) -> SyncStatus:
     if not _is_authorised():
         raise HTTPException(
             409,
-            "Gmail is not authorised yet. Run: uv run python -m agent_app.cli "
-            "sync-email --login",
+            "Gmail is not authorised yet. Run: uv run python -m agent_app.cli sync-email --login",
         )
     try:
         state = JOB.start(include_sent=body.include_sent, limit=body.limit)

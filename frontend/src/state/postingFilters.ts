@@ -23,6 +23,12 @@ const REMEMBERED = [
   "location",
   "remote",
   "posted_after",
+  "region",
+  "country",
+  // "Show me the closed ones too" is a standing decision about what the grid
+  // is for, the same as any other filter here.
+  "include_closed",
+  "only_closed",
 ] as const;
 
 type Remembered = Pick<PostingQuery, (typeof REMEMBERED)[number]>;

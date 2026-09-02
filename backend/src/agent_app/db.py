@@ -597,9 +597,7 @@ def stats(conn: sqlite3.Connection, recent_days: int = 30) -> dict[str, Any]:
     }
 
 
-def places_for(
-    conn: sqlite3.Connection, posting_ids: list[str]
-) -> dict[str, list[dict[str, Any]]]:
+def places_for(conn: sqlite3.Connection, posting_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
     """Every posting's resolved locations, in one query.
 
     The grid asks for five hundred rows at a time, so a query per row is the
