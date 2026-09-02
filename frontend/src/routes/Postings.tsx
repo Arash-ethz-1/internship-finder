@@ -26,6 +26,23 @@ import { STATUS_KEYS, StatusDot, statusStyle } from "../components/status";
 
 const ROW = 36;
 
+/**
+ * The column template, defined once because two grids have to agree on it:
+ * the header sits outside the scroll container and the rows sit inside it, so
+ * if the two drift the labels stop lining up with the data.
+ *
+ * `compact` is what the grid narrows to while the detail panel is open. The
+ * full template needs 44.5rem before the title column gets anything at all,
+ * which is more than the panel leaves on a laptop — and fixed tracks cannot
+ * shrink, so the header used to overflow into the panel. Dropping the three
+ * columns you are least likely to be reading while a posting is open costs
+ * nothing and keeps the rest legible.
+ */
+const COLS = {
+  full: "grid-cols-[1.5rem_10rem_minmax(0,1fr)_9rem_4rem_5.5rem_5.5rem]",
+  compact: "grid-cols-[1.5rem_8rem_minmax(0,1fr)_5.5rem]",
+} as const;
+
 export function Postings() {
   const queryClient = useQueryClient();
   // The grid is the working list, not the pile: it shows what has a status.
@@ -113,6 +130,9 @@ export function Postings() {
     ? { level: stats.data.by_level, status: stats.data.by_status }
     : undefined;
 
+  const compact = openId !== null;
+  const cols = compact ? COLS.compact : COLS.full;
+
   return (
     <div className="flex h-full min-h-0">
       <Rail
@@ -123,14 +143,22 @@ export function Postings() {
         onChange={patch}
       />
 
-      <main className="flex min-w-0 flex-1 flex-col">
-        <div className="grid shrink-0 grid-cols-[1.5rem_11rem_1fr_10rem_4rem_6rem_6rem] items-center gap-3 border-b border-hairline px-3 py-1.5 font-mono text-2xs uppercase tracking-wide text-text-faint">
+      {/* `overflow-hidden` is load-bearing: without it a grid wider than this
+          column escapes into the detail panel instead of being clipped. */}
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div
+          className={`grid shrink-0 items-center gap-3 border-b border-hairline px-3 py-1.5 font-mono text-2xs uppercase tracking-wide text-text-faint ${cols}`}
+        >
           <span />
           <span>company</span>
           <span>title</span>
-          <span>location</span>
-          <span>level</span>
-          <span>posted</span>
+          {!compact && (
+            <>
+              <span>location</span>
+              <span>level</span>
+              <span>posted</span>
+            </>
+          )}
           <span>status</span>
         </div>
 
@@ -157,6 +185,8 @@ export function Postings() {
                   <Row
                     key={row.id}
                     row={row}
+                    cols={cols}
+                    compact={compact}
                     selected={item.index === cursor}
                     open={openId === row.id}
                     style={{
@@ -190,18 +220,29 @@ export function Postings() {
 
 function Row({
   row,
+  cols,
+  compact,
   selected,
   open,
   style,
   onSelect,
 }: {
   row: PostingSummary;
+  cols: string;
+  compact: boolean;
   selected: boolean;
   open: boolean;
   style: React.CSSProperties;
   onSelect: () => void;
 }) {
   const faded = statusStyle(row.status).faded;
+  // Hover is offered only on rows that are neither selected nor open: a
+  // pointer highlight that overrode the selection would hide where you are.
+  const background = selected
+    ? "bg-signal/8"
+    : open
+      ? "bg-surface-sunken"
+      : "hover:bg-surface-sunken";
   return (
     <div
       style={style}
@@ -209,20 +250,26 @@ function Row({
       role="row"
       tabIndex={-1}
       aria-selected={selected}
-      className={`grid cursor-default grid-cols-[1.5rem_11rem_1fr_10rem_4rem_6rem_6rem] items-center gap-3 border-b border-hairline px-3 text-xs ${
-        selected ? "bg-signal/8" : open ? "bg-surface-sunken" : ""
-      } ${faded ? "opacity-45" : ""}`}
+      // Compact mode drops three columns, so the row carries what it hid.
+      title={compact ? `${row.title} — ${row.company}` : undefined}
+      className={`grid cursor-pointer items-center gap-3 border-b border-hairline px-3 text-xs ${cols} ${background} ${
+        faded ? "opacity-45" : ""
+      }`}
     >
       <StatusDot status={row.status} />
       <span className="truncate font-mono">{row.company}</span>
       <span className="truncate">{row.title}</span>
-      <span className="truncate font-mono text-text-muted">
-        {row.remote ? "remote" : (row.location ?? "—")}
-      </span>
-      <span className="font-mono text-text-muted">{row.level}</span>
-      <span className="font-mono tabular-nums text-text-muted">
-        {row.posted_at?.slice(0, 10) ?? "—"}
-      </span>
+      {!compact && (
+        <>
+          <span className="truncate font-mono text-text-muted">
+            {row.remote ? "remote" : (row.location ?? "—")}
+          </span>
+          <span className="font-mono text-text-muted">{row.level}</span>
+          <span className="font-mono tabular-nums text-text-muted">
+            {row.posted_at?.slice(0, 10) ?? "—"}
+          </span>
+        </>
+      )}
       <span className="truncate font-mono text-2xs text-text-muted">
         {row.status === "untriaged" ? "" : row.status}
       </span>
