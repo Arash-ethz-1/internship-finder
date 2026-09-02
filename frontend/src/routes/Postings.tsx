@@ -24,8 +24,10 @@ import { EmptyState, ErrorState, LoadingState } from "../components/states";
 import { STATUS_KEYS, StatusDot, statusStyle } from "../components/status";
 import {
   loadFilters,
+  loadRailOpen,
   sameStatuses,
   saveFilters,
+  saveRailOpen,
 } from "../state/postingFilters";
 
 /**
@@ -70,6 +72,9 @@ export function Postings() {
   const [cursor, setCursor] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  // Remembered like the filters themselves: whether you want the rail is a
+  // standing preference about how you work, not per-visit navigation.
+  const [railOpen, setRailOpen] = useState<boolean>(loadRailOpen);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const postings = useQuery({
@@ -112,13 +117,27 @@ export function Postings() {
     setCursor(0);
   }, []);
 
-  // Keyboard navigation: j/k move, Enter opens, 1-6 set status, Escape closes.
+  // Keyboard: j/k move, Enter opens, 1-5 set status, backslash toggles the
+  // rail, Escape closes the panel.
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
       if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
         return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      // Checked before the empty-grid guard below. Filtering down to nothing is
+      // exactly when you need the rail back, and behind that guard the only way
+      // out would have been a reload.
+      if (event.key === "\\") {
+        event.preventDefault();
+        setRailOpen((current) => {
+          saveRailOpen(!current);
+          return !current;
+        });
+        return;
+      }
+
       if (rows.length === 0) return;
 
       const move = (delta: number) => {
@@ -173,6 +192,13 @@ export function Postings() {
         query={query}
         counts={counts}
         total={postings.data?.total ?? 0}
+        open={railOpen}
+        onToggle={() =>
+          setRailOpen((current) => {
+            saveRailOpen(!current);
+            return !current;
+          })
+        }
         onChange={patch}
       />
 
@@ -247,7 +273,9 @@ export function Postings() {
         )}
 
         <div className="flex shrink-0 items-center justify-between gap-4 border-t border-hairline px-3 py-1.5 font-mono text-2xs text-text-faint">
-          <span>j/k move · enter open · 1-5 status · esc close</span>
+          <span>
+            j/k move · enter open · 1-5 status · \ filters · esc close
+          </span>
           <div className="flex items-center gap-4">
             {/* Standing reminder rather than a one-off toast. A posting that
                 is chunked but not embedded is findable by neither half of
@@ -257,8 +285,8 @@ export function Postings() {
                 className="text-status-interviewing"
                 title="These postings are tracked but cannot be found by search yet. Run: uv run python -m agent_app.cli embed"
               >
-                {stats.data.pending_embedding} chunk(s) not searchable — run
-                cli embed
+                {stats.data.pending_embedding} chunk(s) not searchable — run cli
+                embed
               </span>
             )}
             <button

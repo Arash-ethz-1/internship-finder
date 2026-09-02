@@ -137,11 +137,80 @@ function Check({
   );
 }
 
+/**
+ * How many filters are narrowing the grid right now.
+ *
+ * Only used while the rail is collapsed, and that is the whole point: a hidden
+ * rail must not hide the *fact* that the grid is filtered, or you end up
+ * staring at a short list wondering where the rest went. `status` counts as
+ * one however many boxes are ticked, because it reads as one decision.
+ */
+function activeFilterCount(query: PostingQuery): number {
+  const single = [
+    query.q,
+    query.level,
+    query.source,
+    query.company,
+    query.location,
+    query.region,
+    query.country,
+    query.remote === true ? "remote" : undefined,
+    query.include_closed ? "closed" : undefined,
+    query.only_closed ? "closed-only" : undefined,
+    query.posted_after,
+  ].filter(Boolean).length;
+  return single + (query.status?.length ? 1 : 0);
+}
+
+/** The collapsed rail: a hairline strip that says what it is hiding. */
+function ClosedRail({
+  query,
+  total,
+  onOpen,
+}: {
+  query: PostingQuery;
+  total: number;
+  onOpen: () => void;
+}) {
+  const active = activeFilterCount(query);
+  return (
+    <aside className="flex w-9 shrink-0 flex-col items-center gap-3 border-r border-hairline py-2">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="px-1 py-0.5 font-mono text-2xs text-text-muted hover:text-signal"
+        title="Show filters (\)"
+        aria-label="Show filters"
+        aria-expanded={false}
+      >
+        »
+      </button>
+      {active > 0 && (
+        <span
+          className="flex h-4 w-4 items-center justify-center rounded-xs bg-signal/15 font-mono text-2xs tabular-nums text-signal"
+          title={`${active} filter${active === 1 ? "" : "s"} active`}
+        >
+          {active}
+        </span>
+      )}
+      {/* Vertical, so the count is readable without widening the strip. */}
+      <span
+        className="font-mono text-2xs tabular-nums text-text-faint"
+        style={{ writingMode: "vertical-rl" }}
+      >
+        {total.toLocaleString()} matching
+      </span>
+    </aside>
+  );
+}
+
 export function Rail({
   options,
   query,
   counts,
   total,
+  open,
+  onToggle,
   onChange,
 }: {
   options: FilterOptions | undefined;
@@ -150,11 +219,32 @@ export function Rail({
     | { level: Record<string, number>; status: Record<string, number> }
     | undefined;
   total: number;
+  open: boolean;
+  onToggle: () => void;
   onChange: (patch: Partial<PostingQuery>) => void;
 }) {
+  if (!open) {
+    return <ClosedRail query={query} total={total} onOpen={onToggle} />;
+  }
+
   return (
     <aside className="flex w-56 shrink-0 flex-col overflow-y-auto border-r border-hairline">
       <div className="border-b border-hairline px-3 py-3">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="font-mono text-2xs uppercase tracking-wide text-text-faint">
+            filters
+          </span>
+          <button
+            type="button"
+            onClick={onToggle}
+            className="px-1 font-mono text-2xs text-text-faint hover:text-signal"
+            title="Hide filters (\)"
+            aria-label="Hide filters"
+            aria-expanded
+          >
+            «
+          </button>
+        </div>
         <input
           type="search"
           value={query.q ?? ""}

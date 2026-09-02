@@ -87,6 +87,26 @@ export function saveFilters(query: PostingQuery): void {
   }
 }
 
+const RAIL_KEY = "internship-finder:rail-open:v1";
+
+/** Whether the filter rail is showing. Open on a first visit: a rail you have
+ *  never seen cannot be found. */
+export function loadRailOpen(): boolean {
+  try {
+    return localStorage.getItem(RAIL_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+export function saveRailOpen(open: boolean): void {
+  try {
+    localStorage.setItem(RAIL_KEY, open ? "1" : "0");
+  } catch {
+    // Storage being unavailable is not worth failing a toggle over.
+  }
+}
+
 /** Two status selections are the same set, whatever the order. */
 export function sameStatuses(
   a: string[] | undefined,
