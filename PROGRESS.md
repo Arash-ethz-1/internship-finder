@@ -265,6 +265,16 @@ full strength.
    collapsed `<details>`. They were always there; the page now counts them
    next to the filter and opens the section when it is the only thing there is.
 
+7. **A busy model is a 503, not a 500 with a traceback.** `POST /api/letters/`
+   hit Anthropic's `529 Overloaded` and the exception went straight through
+   uvicorn. `call_model` now raises `ModelBusy` for 408/409/429/5xx and
+   connection failures, separate from `LetterError`, because the two want
+   opposite answers from the person: one says fix something, the other says
+   press the button again. The route maps it to 503 with `Retry-After`, and
+   the SDK's retry budget went from its default 2 to 4 — drafting a letter is
+   one deliberate click, worth waiting through a busy minute for.
+   `inbox/classify.py` already caught broadly, so a sync degrades on its own.
+
 ### The email pipeline has now run end to end
 
 Verified 2026-09-02 against the real mailbox. A test rejection naming

@@ -79,7 +79,27 @@ Draft the motivational letter."""
 
 
 class LetterError(RuntimeError):
-    """Drafting could not be completed."""
+    """Drafting could not be completed, and something about the input is why.
+
+    An empty ``profile/``, a posting that cannot be grounded, an empty
+    response. These are states the person can do something about.
+    """
+
+
+class ModelBusy(RuntimeError):
+    """The model was unavailable. Nothing is wrong with the request.
+
+    Kept separate from :class:`LetterError` because the two want opposite
+    answers: one says fix something, the other says press the button again.
+    A 529 used to arrive as a 500 with a traceback, which says neither.
+    """
+
+
+# The SDK's own default is 2. Drafting a letter is a single deliberate click,
+# so it is worth waiting through a busy minute rather than handing back an
+# error the person can only respond to by clicking again.
+MODEL_RETRIES = 4
+MODEL_TIMEOUT = 120.0
 
 
 @dataclass(frozen=True)
@@ -140,16 +160,38 @@ def build_prompt(posting: Posting, hits: list[SearchHit]) -> str:
 
 
 def call_model(settings: Settings, prompt: str) -> str:
-    """Ask the model for the letter body."""
-    from anthropic import Anthropic
+    """Ask the model for the letter body.
 
-    client = Anthropic(api_key=settings.require_anthropic_key())
-    message = client.messages.create(
-        model=settings.agent_model,
-        max_tokens=2000,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": prompt}],
+    The SDK retries overloads and rate limits on its own with backoff; what is
+    added here is a longer budget and a translation, so that "the service is
+    busy" and "your profile is empty" do not reach the dashboard as the same
+    unexplained failure.
+    """
+    from anthropic import Anthropic, APIConnectionError, APIStatusError
+
+    client = Anthropic(
+        api_key=settings.require_anthropic_key(),
+        max_retries=MODEL_RETRIES,
+        timeout=MODEL_TIMEOUT,
     )
+    try:
+        message = client.messages.create(
+            model=settings.agent_model,
+            max_tokens=2000,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except APIStatusError as exc:
+        if exc.status_code in (408, 409, 429) or exc.status_code >= 500:
+            raise ModelBusy(
+                f"The model is busy (HTTP {exc.status_code}) and did not answer after "
+                f"{MODEL_RETRIES} retries. Nothing is wrong with the posting or your "
+                "profile — try again in a moment."
+            ) from exc
+        raise LetterError(f"The model refused the request: HTTP {exc.status_code}") from exc
+    except APIConnectionError as exc:
+        raise ModelBusy(f"Could not reach the model: {exc}") from exc
+
     text = "".join(block.text for block in message.content if block.type == "text").strip()
     if not text:
         raise LetterError("The model returned an empty letter")

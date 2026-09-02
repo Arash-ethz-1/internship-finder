@@ -10,14 +10,16 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import httpx
 import pytest
 
-from agent_app.config import Settings
+from agent_app.config import Settings, get_settings, reset_settings
 from agent_app.core import letters
 from agent_app.core.letters import (
     SYSTEM_PROMPT,
     Letter,
     LetterError,
+    ModelBusy,
     build_prompt,
     format_extracts,
     letter_path,
@@ -212,3 +214,77 @@ def test_letter_serialises_its_grounding(tmp_path: Path) -> None:
     data = letter.to_dict()
     assert data["grounding"][0]["profile_doc"] == "pyblio"
     assert data["grounding"][0]["score"] == 0.8
+
+
+# --- when the model is busy rather than wrong ------------------------------
+
+
+class _Response:
+    """The minimum an anthropic.APIStatusError needs to be constructed."""
+
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+        self.headers: dict[str, str] = {}
+        self.request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+
+
+def _raise_status(status_code: int):  # noqa: ANN202
+    from anthropic import APIStatusError
+
+    def factory(**_kwargs: object) -> None:
+        raise APIStatusError("boom", response=_Response(status_code), body=None)
+
+    return factory
+
+
+def _client_raising(status_code: int):  # noqa: ANN202
+    class _Messages:
+        create = staticmethod(_raise_status(status_code))
+
+    class _Client:
+        def __init__(self, **_kwargs: object) -> None:
+            self.messages = _Messages()
+
+    return _Client
+
+
+@pytest.mark.parametrize("status_code", [429, 500, 529])
+def test_an_overloaded_model_is_busy_not_broken(
+    monkeypatch: pytest.MonkeyPatch, settings: Settings, status_code: int
+) -> None:
+    """A 529 used to reach the dashboard as a 500 with a traceback."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    reset_settings()
+    monkeypatch.setattr("anthropic.Anthropic", _client_raising(status_code))
+
+    with pytest.raises(ModelBusy, match="try again"):
+        letters.call_model(get_settings(), "prompt")
+
+
+def test_a_refusal_is_a_letter_error(monkeypatch: pytest.MonkeyPatch, settings: Settings) -> None:
+    """400 is not going to fix itself by waiting, so it is not ModelBusy."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    reset_settings()
+    monkeypatch.setattr("anthropic.Anthropic", _client_raising(400))
+
+    with pytest.raises(LetterError, match="refused"):
+        letters.call_model(get_settings(), "prompt")
+
+
+def test_the_route_answers_503_when_the_model_is_busy(
+    monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from agent_app.api.main import create_app
+
+    def busy(*_args: object, **_kwargs: object) -> None:
+        raise ModelBusy("the model is busy, try again in a moment")
+
+    monkeypatch.setattr("agent_app.api.routes_letters.draft_letter", busy)
+    with TestClient(create_app()) as client:
+        response = client.post("/api/letters/greenhouse:1")
+
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "20"
+    assert "try again" in response.text
