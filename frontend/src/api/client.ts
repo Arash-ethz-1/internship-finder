@@ -212,7 +212,8 @@ export interface PostingQuery {
   location?: string;
   remote?: boolean;
   source?: string;
-  status?: string;
+  /** Any number of statuses, OR-ed. Empty or absent means no constraint. */
+  status?: string[];
   posted_after?: string;
   sort?: string;
   descending?: boolean;
@@ -225,7 +226,12 @@ export interface PostingQuery {
 function toQueryString(query: object): string {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined && value !== null && value !== "") {
+    // An array becomes a repeated key — ?status=applied&status=interviewing —
+    // which is how FastAPI reads a list-valued query parameter.
+    if (Array.isArray(value)) {
+      for (const item of value)
+        if (item !== undefined && item !== "") params.append(key, String(item));
+    } else if (value !== undefined && value !== null && value !== "") {
       params.set(key, String(value));
     }
   }
@@ -249,11 +255,18 @@ export function getStats(): Promise<Stats> {
   return request<Stats>("/api/stats");
 }
 
-export function setStatus(id: string, status: Status, note = ""): Promise<ApplicationState> {
-  return request<ApplicationState>(`/api/applications/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    body: JSON.stringify({ status, note }),
-  });
+export function setStatus(
+  id: string,
+  status: Status,
+  note = "",
+): Promise<ApplicationState> {
+  return request<ApplicationState>(
+    `/api/applications/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status, note }),
+    },
+  );
 }
 
 /** Set one status on many postings in a single request. */
@@ -269,7 +282,9 @@ export function setStatusBulk(
 }
 
 export function draftLetter(id: string): Promise<LetterResponse> {
-  return request<LetterResponse>(`/api/letters/${encodeURIComponent(id)}`, { method: "POST" });
+  return request<LetterResponse>(`/api/letters/${encodeURIComponent(id)}`, {
+    method: "POST",
+  });
 }
 
 export interface InboxFilters {
@@ -301,12 +316,17 @@ export function acceptSuggestion(
 ): Promise<ApplicationState> {
   return request<ApplicationState>(`/api/inbox/${id}/accept`, {
     method: "POST",
-    body: JSON.stringify({ posting_id: postingId ?? null, status: status ?? null }),
+    body: JSON.stringify({
+      posting_id: postingId ?? null,
+      status: status ?? null,
+    }),
   });
 }
 
 export function dismissSuggestion(id: number): Promise<InboxSuggestion> {
-  return request<InboxSuggestion>(`/api/inbox/${id}/dismiss`, { method: "POST" });
+  return request<InboxSuggestion>(`/api/inbox/${id}/dismiss`, {
+    method: "POST",
+  });
 }
 
 // --- the agent stream ------------------------------------------------------
@@ -340,7 +360,8 @@ export interface ErrorEvent {
   status: number;
 }
 
-export type AgentEvent = ToolCallEvent | ToolResultEvent | TextEvent | DoneEvent | ErrorEvent;
+export type AgentEvent =
+  ToolCallEvent | ToolResultEvent | TextEvent | DoneEvent | ErrorEvent;
 
 /**
  * POST a chat turn and yield Server-Sent Events as they arrive.

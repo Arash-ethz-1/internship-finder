@@ -29,14 +29,19 @@ import { STATUS_LABELS, StatusLabel } from "../components/status";
 function Confidence({ value }: { value: number | null }) {
   const pct = Math.round((value ?? 0) * 100);
   return (
-    <span className="flex items-center gap-1.5" title={`model confidence ${pct}%`}>
+    <span
+      className="flex items-center gap-1.5"
+      title={`model confidence ${pct}%`}
+    >
       <span className="h-1 w-10 overflow-hidden rounded-xs bg-surface-sunken">
         <span
           className={`block h-full ${pct >= 70 ? "bg-signal" : "bg-text-faint"}`}
           style={{ width: `${pct}%` }}
         />
       </span>
-      <span className="font-mono text-2xs tabular-nums text-text-faint">{pct}%</span>
+      <span className="font-mono text-2xs tabular-nums text-text-faint">
+        {pct}%
+      </span>
     </span>
   );
 }
@@ -70,7 +75,9 @@ const CLASSIFICATION: Record<string, { label: string; chip: string }> = {
 
 function Row({ item }: { item: InboxSuggestion }) {
   const queryClient = useQueryClient();
-  const [status, setStatus] = useState<Status | "">(item.suggested_status ?? "");
+  const [status, setStatus] = useState<Status | "">(
+    item.suggested_status ?? "",
+  );
   const [postingId, setPostingId] = useState(item.posting_id ?? "");
 
   const invalidate = () => {
@@ -81,7 +88,11 @@ function Row({ item }: { item: InboxSuggestion }) {
 
   const accept = useMutation({
     mutationFn: () =>
-      acceptSuggestion(item.id, postingId || undefined, (status || undefined) as Status),
+      acceptSuggestion(
+        item.id,
+        postingId || undefined,
+        (status || undefined) as Status,
+      ),
     onSuccess: invalidate,
   });
   const dismiss = useMutation({
@@ -115,8 +126,12 @@ function Row({ item }: { item: InboxSuggestion }) {
 
       {/* The subject is how you recognise a message, so it is the one thing
           here at reading size rather than at data size. */}
-      <div className="mt-2 text-sm font-medium">{item.subject || "(no subject)"}</div>
-      <div className="mt-0.5 font-mono text-2xs text-text-muted">{item.sender}</div>
+      <div className="mt-2 text-sm font-medium">
+        {item.subject || "(no subject)"}
+      </div>
+      <div className="mt-0.5 font-mono text-2xs text-text-muted">
+        {item.sender}
+      </div>
       {item.snippet && (
         <p className="mt-2 max-w-prose border-l border-hairline pl-3 text-xs leading-relaxed text-text-muted">
           {item.snippet}
@@ -126,7 +141,9 @@ function Row({ item }: { item: InboxSuggestion }) {
       <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
         {item.posting_id ? (
           <span className="flex items-baseline gap-2 text-xs">
-            <span className="font-mono text-2xs text-text-faint">{item.posting_id}</span>
+            <span className="font-mono text-2xs text-text-faint">
+              {item.posting_id}
+            </span>
             <span>
               {item.company} — {item.title}
             </span>
@@ -138,7 +155,8 @@ function Row({ item }: { item: InboxSuggestion }) {
           <span className="flex items-center gap-2 text-xs text-text-muted">
             <span>
               Not matched
-              {item.company_guess ? ` — looks like ${item.company_guess}` : ""}. Which posting?
+              {item.company_guess ? ` — looks like ${item.company_guess}` : ""}.
+              Which posting?
             </span>
             <input
               value={postingId}
@@ -262,6 +280,10 @@ export function Inbox() {
   // `pending` is the unfiltered count, so this is what the filters are hiding
   // rather than what does not exist.
   const hidden = Math.max(0, data.pending - data.items.length);
+  // A suggestion with no suggested_status is one the classifier read and
+  // decided was not about an application. Still a result, just not a decision.
+  const actionable = data.items.filter((item) => item.suggested_status);
+  const rest = data.items.filter((item) => !item.suggested_status);
   const narrowed = kind !== "" || minConfidence > 0;
 
   if (data.items.length === 0 && narrowed) {
@@ -296,13 +318,12 @@ export function Inbox() {
           "you have already recorded. Nothing is ever applied automatically — every " +
           "status change starts as a row on this page that you accept."
         }
-        command={"cd backend\nuv run python -m agent_app.cli sync-email --login"}
+        command={
+          "cd backend\nuv run python -m agent_app.cli sync-email --login"
+        }
       />
     );
   }
-
-  const actionable = data.items.filter((item) => item.suggested_status);
-  const rest = data.items.filter((item) => !item.suggested_status);
 
   return (
     <div className="mx-auto h-full w-full max-w-4xl overflow-y-auto">
@@ -313,17 +334,20 @@ export function Inbox() {
         </span>
       </div>
       <p className="max-w-prose px-4 pt-1 text-xs text-text-muted">
-        Read-only from Gmail. Nothing below has been applied — accepting one is what
-        moves the application, and records which email caused it.
+        Read-only from Gmail. Nothing below has been applied — accepting one is
+        what moves the application, and records which email caused it.
       </p>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 pt-3 pb-4">
         {filters}
-        {hidden > 0 && (
-          <span className="font-mono text-2xs text-text-faint">
-            {hidden} hidden by this filter
-          </span>
-        )}
+        {/* "everything" returning one visible row is confusing unless the page
+            says where the rest went: the ones the classifier judged not to be
+            about an application are real results, they are just folded away. */}
+        <span className="font-mono text-2xs text-text-faint">
+          {actionable.length} to act on
+          {rest.length > 0 && ` · ${rest.length} not about an application`}
+          {hidden > 0 && ` · ${hidden} hidden by this filter`}
+        </span>
       </div>
 
       <div className="border-t border-hairline">
@@ -333,7 +357,10 @@ export function Inbox() {
       </div>
 
       {rest.length > 0 && (
-        <details className="px-4 py-4">
+        <details
+          className="px-4 py-4"
+          open={kind === "other" || actionable.length === 0}
+        >
           <summary className="cursor-pointer font-mono text-2xs uppercase tracking-wide text-text-faint">
             {rest.length} read and judged not to be about an application
           </summary>

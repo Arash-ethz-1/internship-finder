@@ -255,3 +255,49 @@ def test_the_rest_of_the_api_still_works_while_those_are_unimplemented(
     assert client.get("/api/postings").status_code == 200
     assert client.get("/api/stats").status_code == 200
     assert client.get("/api/health").status_code == 200
+
+
+# --- choosing which statuses the grid shows --------------------------------
+
+
+def _set_status(client: TestClient, posting_id: str, status: str) -> None:
+    response = client.patch(f"/api/applications/{posting_id}", json={"status": status})
+    assert response.status_code == 200, response.text
+
+
+def test_status_filter_takes_several_values(client: TestClient, conn: sqlite3.Connection) -> None:
+    """The whole point: "show me my list, but not the ones I passed on"."""
+    seed(conn)
+    _set_status(client, "greenhouse:1", "applied")
+    _set_status(client, "lever:2", "not_relevant")
+
+    both = client.get("/api/postings?status=applied&status=not_relevant").json()
+    assert {row["id"] for row in both["items"]} == {"greenhouse:1", "lever:2"}
+
+    one = client.get("/api/postings?status=applied").json()
+    assert [row["id"] for row in one["items"]] == ["greenhouse:1"]
+
+
+def test_untriaged_can_be_mixed_with_real_statuses(
+    client: TestClient, conn: sqlite3.Connection
+) -> None:
+    seed(conn)
+    _set_status(client, "greenhouse:1", "applied")
+
+    page = client.get("/api/postings?status=applied&status=untriaged").json()
+    assert page["total"] == 3
+
+
+def test_no_status_filter_still_means_everything(
+    client: TestClient, conn: sqlite3.Connection
+) -> None:
+    seed(conn)
+    _set_status(client, "greenhouse:1", "not_relevant")
+    assert client.get("/api/postings").json()["total"] == 3
+
+
+def test_an_unknown_status_is_rejected(client: TestClient, conn: sqlite3.Connection) -> None:
+    seed(conn)
+    response = client.get("/api/postings?status=applied&status=nonsense")
+    assert response.status_code == 422
+    assert "nonsense" in response.text

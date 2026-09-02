@@ -1,5 +1,10 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -12,7 +17,7 @@ import {
   type Status,
 } from "../api/client";
 import { DetailPanel } from "../components/DetailPanel";
-import { Rail } from "../components/Rail";
+import { ON_MY_LIST, Rail } from "../components/Rail";
 import { EmptyState, ErrorState, LoadingState } from "../components/states";
 import { STATUS_KEYS, StatusDot, statusStyle } from "../components/status";
 
@@ -45,10 +50,13 @@ const COLS = {
 
 export function Postings() {
   const queryClient = useQueryClient();
-  // The grid is the working list, not the pile: it shows what has a status.
-  // `status: "tracked"` is the server's name for "anything but untriaged" —
+  // The grid is the working list, not the pile: it shows what you decided
+  // something about, minus what you decided against. `ON_MY_LIST` is that set;
   // without it, opening this view means scrolling 24,000 rows nobody chose.
-  const [query, setQuery] = useState<PostingQuery>({ limit: 5000, status: "tracked" });
+  const [query, setQuery] = useState<PostingQuery>({
+    limit: 5000,
+    status: ON_MY_LIST,
+  });
   const [cursor, setCursor] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -64,11 +72,14 @@ export function Postings() {
   const rows = useMemo(() => postings.data?.items ?? [], [postings.data]);
 
   const mutate = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: Status }) => setStatus(id, status),
+    mutationFn: ({ id, status }: { id: string; status: Status }) =>
+      setStatus(id, status),
     onSuccess: (_data, variables) => {
       void queryClient.invalidateQueries({ queryKey: ["postings"] });
       void queryClient.invalidateQueries({ queryKey: ["stats"] });
-      void queryClient.invalidateQueries({ queryKey: ["posting", variables.id] });
+      void queryClient.invalidateQueries({
+        queryKey: ["posting", variables.id],
+      });
     },
   });
 
@@ -88,7 +99,8 @@ export function Postings() {
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
-      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+        return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (rows.length === 0) return;
 
@@ -113,7 +125,11 @@ export function Postings() {
         return;
       }
       const index = Number(event.key);
-      if (Number.isInteger(index) && index >= 1 && index <= STATUS_KEYS.length) {
+      if (
+        Number.isInteger(index) &&
+        index >= 1 &&
+        index <= STATUS_KEYS.length
+      ) {
         const row = rows[cursor];
         if (row) {
           event.preventDefault();
@@ -169,7 +185,7 @@ export function Postings() {
           <EmptyState
             title="No postings match"
             detail={
-              query.status === "tracked" && !query.q && !query.level
+              query.status === ON_MY_LIST && !query.q && !query.level
                 ? "Nothing is on your list yet. Search on the chat page and keep what looks right — anything you keep shows up here."
                 : "Nothing matches these filters. Clear one from the left rail."
             }
@@ -178,7 +194,12 @@ export function Postings() {
 
         {rows.length > 0 && (
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
-            <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+            <div
+              style={{
+                height: virtualizer.getTotalSize(),
+                position: "relative",
+              }}
+            >
               {virtualizer.getVirtualItems().map((item) => {
                 const row = rows[item.index];
                 return (

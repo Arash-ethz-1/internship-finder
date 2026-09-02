@@ -39,6 +39,14 @@ router = APIRouter(prefix="/api", tags=["postings"])
 
 Conn = Annotated[sqlite3.Connection, Depends(get_db)]
 
+# Repeatable, so ?status=applied&status=interviewing is both. Annotated rather
+# than a Query() default because a list default in a signature is the shape
+# ruff's B008 exists to catch.
+StatusQuery = Annotated[
+    list[str] | None,
+    Query(description="repeatable; a status, or 'untriaged' / 'tracked'. Several are OR-ed."),
+]
+
 
 @router.get("/postings", response_model=PostingPage)
 def get_postings(
@@ -49,7 +57,7 @@ def get_postings(
     location: str | None = None,
     remote: bool | None = None,
     source: str | None = Query(default=None, description=f"one of {SOURCES}"),
-    status: str | None = Query(default=None, description="a status, or 'untriaged' / 'tracked'"),
+    status: StatusQuery = None,
     posted_after: str | None = Query(default=None, description="UTC ISO-8601"),
     sort: str = "posted_at",
     descending: bool = True,
@@ -61,8 +69,10 @@ def get_postings(
     The grid is virtualised client-side, so the default limit is generous: one
     request for the whole working set beats paging at this corpus size.
     """
-    if status is not None and status not in (*STATUSES, "untriaged", "tracked"):
-        raise HTTPException(422, f"Unknown status {status!r}")
+    known = (*STATUSES, "untriaged", "tracked")
+    for value in status or ():
+        if value not in known:
+            raise HTTPException(422, f"Unknown status {value!r}")
 
     filters = PostingFilters(
         q=q,
@@ -71,7 +81,7 @@ def get_postings(
         location=location,
         remote=remote,
         source=source,
-        status=status,
+        statuses=tuple(status or ()),
         posted_after=posted_after,
     )
     rows, total = list_postings(

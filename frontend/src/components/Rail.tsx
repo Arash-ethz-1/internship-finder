@@ -6,10 +6,18 @@ import { STATUS_LABELS } from "./status";
  * stat tiles. Every control here narrows the grid.
  */
 
-function Group({ label, children }: { label: string; children: React.ReactNode }) {
+function Group({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="border-b border-hairline px-3 py-3">
-      <div className="mb-2 font-mono text-2xs uppercase tracking-wide text-text-faint">{label}</div>
+      <div className="mb-2 font-mono text-2xs uppercase tracking-wide text-text-faint">
+        {label}
+      </div>
       {children}
     </div>
   );
@@ -43,9 +51,90 @@ function Radio({
     >
       <span className="truncate">{label}</span>
       {count !== undefined && (
-        <span className="font-mono text-2xs tabular-nums text-text-faint">{count}</span>
+        <span className="font-mono text-2xs tabular-nums text-text-faint">
+          {count}
+        </span>
       )}
     </button>
+  );
+}
+
+/**
+ * Every state a posting can be in, as its own checkbox.
+ *
+ * It was one radio button, so "everything I have touched except the ones I
+ * passed on" — the view you actually work in — could not be expressed at all.
+ * Nothing ticked means no constraint, which is not the same as ticking them
+ * all: an untriaged posting has no status to be in a list.
+ *
+ * `tracked` is gone from here. It was a group masquerading as a member, and
+ * the presets below say the same thing without the category error.
+ */
+const STATUS_CHOICES = [
+  "untriaged",
+  "found",
+  "interested",
+  "ready_to_submit",
+  "applied",
+  "interviewing",
+  "offer",
+  "rejected",
+  "declined",
+  "not_relevant",
+];
+
+/** `on my list` is the default the grid opens on: everything you decided
+ *  something about, minus the ones you decided against. */
+const PRESETS: { label: string; statuses: () => string[] | undefined }[] = [
+  {
+    label: "on my list",
+    statuses: () =>
+      STATUS_CHOICES.filter((s) => !["untriaged", "not_relevant"].includes(s)),
+  },
+  { label: "untriaged", statuses: () => ["untriaged"] },
+  { label: "everything", statuses: () => undefined },
+];
+
+export const ON_MY_LIST = PRESETS[0].statuses() as string[];
+
+function Check({
+  value,
+  chosen,
+  label,
+  count,
+  onChange,
+}: {
+  value: string;
+  chosen: string[];
+  label: string;
+  count?: number;
+  onChange: (patch: Partial<PostingQuery>) => void;
+}) {
+  const active = chosen.includes(value);
+  return (
+    <label
+      className={`flex w-full cursor-pointer items-center gap-2 rounded-xs px-1 py-0.5 text-xs ${
+        active ? "text-text" : "text-text-muted hover:text-text"
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={active}
+        onChange={() => {
+          const next = active
+            ? chosen.filter((s) => s !== value)
+            : [...chosen, value];
+          onChange({ status: next.length ? next : undefined });
+        }}
+        className="accent-signal"
+      />
+      <span className="truncate">{label}</span>
+      {count !== undefined && (
+        <span className="ml-auto font-mono text-2xs tabular-nums text-text-faint">
+          {count}
+        </span>
+      )}
+    </label>
   );
 }
 
@@ -58,7 +147,9 @@ export function Rail({
 }: {
   options: FilterOptions | undefined;
   query: PostingQuery;
-  counts: { level: Record<string, number>; status: Record<string, number> } | undefined;
+  counts:
+    | { level: Record<string, number>; status: Record<string, number> }
+    | undefined;
   total: number;
   onChange: (patch: Partial<PostingQuery>) => void;
 }) {
@@ -93,15 +184,26 @@ export function Rail({
       </Group>
 
       <Group label="status">
-        {["tracked", "untriaged", ...Object.keys(STATUS_LABELS).filter((s) => s !== "untriaged")].map((s) => (
-          <Radio
+        <div className="mb-2 flex flex-wrap gap-1">
+          {PRESETS.map((preset) => (
+            <button
+              key={preset.label}
+              type="button"
+              onClick={() => onChange({ status: preset.statuses() })}
+              className="rounded-xs border border-hairline px-1.5 py-0.5 font-mono text-2xs text-text-muted hover:border-signal hover:text-signal"
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+        {STATUS_CHOICES.map((s) => (
+          <Check
             key={s}
-            name="status"
             value={s}
-            current={query.status}
-            label={STATUS_LABELS[s as keyof typeof STATUS_LABELS] ?? s}
+            chosen={query.status ?? []}
+            label={STATUS_LABELS[s] ?? s}
             count={counts?.status[s]}
-            onChange={(v) => onChange({ status: v })}
+            onChange={onChange}
           />
         ))}
       </Group>
@@ -119,7 +221,9 @@ export function Rail({
           <input
             type="checkbox"
             checked={query.remote === true}
-            onChange={(e) => onChange({ remote: e.target.checked ? true : undefined })}
+            onChange={(e) =>
+              onChange({ remote: e.target.checked ? true : undefined })
+            }
             className="accent-signal"
           />
           remote only

@@ -289,7 +289,11 @@ class PostingFilters:
     location: str | None = None
     remote: bool | None = None
     source: str | None = None
-    status: str | None = None  # a status, or "untriaged" / "tracked"
+    # Any number of statuses, OR-ed. "untriaged" and "tracked" are pseudo-
+    # statuses: no application row, and any application row. Empty means no
+    # constraint, which is not the same as "every status" -- `untriaged` rows
+    # have no status at all to be in a list.
+    statuses: tuple[str, ...] = ()
     posted_after: str | None = None
 
 
@@ -328,15 +332,21 @@ def _posting_where(filters: PostingFilters) -> tuple[str, list[Any]]:
     if filters.posted_after:
         where.append("p.posted_at >= ?")
         params.append(filters.posted_after)
-    if filters.status == "untriaged":
-        where.append("a.posting_id IS NULL")
-    elif filters.status == "tracked":
-        # Everything the person has touched, whatever they decided. The grid
-        # opens on this: 24,000 untriaged rows is a pile, not a list.
-        where.append("a.posting_id IS NOT NULL")
-    elif filters.status:
-        where.append("a.status = ?")
-        params.append(filters.status)
+    if filters.statuses:
+        alternatives: list[str] = []
+        if "untriaged" in filters.statuses:
+            alternatives.append("a.posting_id IS NULL")
+        if "tracked" in filters.statuses:
+            # Everything the person has touched, whatever they decided.
+            alternatives.append("a.posting_id IS NOT NULL")
+        concrete = [s for s in filters.statuses if s in STATUSES]
+        if concrete:
+            marks = ",".join("?" * len(concrete))
+            alternatives.append(f"a.status IN ({marks})")
+            params.extend(concrete)
+        # Every named status was unrecognised: match nothing rather than
+        # silently widening to everything.
+        where.append("(" + " OR ".join(alternatives) + ")" if alternatives else "0")
 
     return (" WHERE " + " AND ".join(where) if where else "", params)
 

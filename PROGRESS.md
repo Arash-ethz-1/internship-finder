@@ -248,6 +248,45 @@ the hardest thing on the page to read. The dot still recedes — that is
 `plan.md`'s across-the-room signal — but the text sits on a tinted ground at
 full strength.
 
+5. **The grid's status filter is a checkbox list.** It was one radio button
+   with `tracked` — "anything but untriaged" — as one of the options, so
+   "everything I have touched except the ones I passed on", which is the view
+   you actually work in, could not be expressed. `GET /api/postings` now takes
+   a repeatable `status` param, OR-ed; `PostingFilters.status` became
+   `statuses: tuple[str, ...]`. Nothing ticked means no constraint, which is
+   deliberately not the same as ticking everything: an untriaged posting has
+   no status to be in a list. `tracked` stays in the API and is gone from the
+   rail — it was a group masquerading as a member. Three presets say the same
+   thing without the category error, and the grid opens on `on my list`.
+
+6. **The inbox was folding results away silently.** With the filter on
+   "everything" you saw one row, because the eighteen the classifier judged
+   not to be about an application have no `suggested_status` and live behind a
+   collapsed `<details>`. They were always there; the page now counts them
+   next to the filter and opens the section when it is the only thing there is.
+
+### The email pipeline has now run end to end
+
+Verified 2026-09-02 against the real mailbox. A test rejection naming
+Databricks — the one `applied` posting — was matched to
+`greenhouse:8732364002`, classified `rejection` at **0.97**, and stored as a
+suggestion. `applications` was untouched, which is the property that matters.
+
+Two things the test surfaced:
+
+- **`QUERY_EXCLUSIONS` carries `-from:me`**, so a self-sent test message is
+  invisible to `cli sync-email`. That is right in production — your own
+  application mail should not be classified — and it means a test has to come
+  from elsewhere, or override the query in a one-off script. The shipped code
+  was not changed for the test.
+- **The match ran on the subject, not the sender domain.** `gmail.com` is on
+  the ATS/consumer list and is discarded, so signal 1 never fired. A real
+  Databricks rejection would match on the domain instead.
+
+First real confidence reading: 0.97 on an unambiguous rejection. One sample
+says nothing about whether the scores spread out, which is still the thing to
+watch.
+
 ### Retrieval, after using it in anger
 
 Two complaints, two different answers:
