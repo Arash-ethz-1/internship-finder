@@ -38,9 +38,12 @@ from .ingest import (
     index_pending_locations,
     load_companies,
     load_verified,
+    location_coverage,
+    reindex_all_locations,
     run_discovery,
     run_ingest,
     seed_from_toml,
+    top_unresolved,
 )
 from .runtime import close_db, get_db, reset_bm25_index, reset_vectors
 
@@ -144,6 +147,51 @@ def cmd_discover(args: argparse.Namespace) -> int:
     print()
     print(f"companies table: {company_counts(conn)}")
     print(f"ready to ingest: {len(load_verified(conn))}")
+    return 0
+
+
+def cmd_locations(args: argparse.Namespace) -> int:
+    """Parse posting locations into somewhere you can filter on, and report the gap.
+
+    Two jobs, because they are the two halves of tuning this. The default pass
+    is idempotent and fills in whatever is missing. `--rebuild` throws the
+    whole table away and does it again, which is what you run after widening
+    the city table in `core/locations.py` -- the stored rows are a cache of
+    what that module knew at the time.
+
+    `--unresolved` is the worklist: the location strings the parser could not
+    resolve, most common first. Adding the cities at the top of that list is
+    where a line of table buys the most.
+    """
+    conn = get_db()
+
+    if args.unresolved:
+        rows = top_unresolved(conn, limit=args.limit)
+        if not rows:
+            print("Every location resolved.")
+            return 0
+        print(f"{len(rows)} unresolved location string(s), most common first:\n")
+        for raw, count in rows:
+            print(f"  {count:>5}  {raw}")
+        print("\nAdd the ones worth having to _CITY_TABLE in core/locations.py,")
+        print("then re-run: cli locations --rebuild")
+        return 0
+
+    report = reindex_all_locations(conn) if args.rebuild else index_pending_locations(conn)
+    print(report.format())
+
+    stats_row = location_coverage(conn)
+    postings = stats_row["postings"] or 1
+    print()
+    print(
+        f"  {stats_row['with_country']:,}/{postings:,} posting(s) have a country "
+        f"({100 * stats_row['with_country'] / postings:.1f}%)"
+    )
+    print(f"  {stats_row['with_region']:,} have a region")
+    if stats_row["unresolved"]:
+        print(
+            f"  {stats_row['unresolved']:,} place(s) unresolved — see: cli locations --unresolved"
+        )
     return 0
 
 
@@ -574,6 +622,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="how many company names to request, with --from llm (default 50)",
     )
     p_discover.set_defaults(func=cmd_discover)
+
+    p_locations = sub.add_parser(
+        "locations",
+        help="parse posting locations into country and region",
+        description=(
+            "Resolve each posting's location string into a city, country and region "
+            "so the grid and the agent can filter by place. Runs as part of `ingest`; "
+            "this is for re-running it after changing the tables in core/locations.py."
+        ),
+    )
+    p_locations.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="throw away every parsed location and do them all again",
+    )
+    p_locations.add_argument(
+        "--unresolved",
+        action="store_true",
+        help="list the location strings the parser could not resolve",
+    )
+    p_locations.add_argument("--limit", type=int, default=40, help="how many to list")
+    p_locations.set_defaults(func=cmd_locations)
 
     p_companies = sub.add_parser(
         "companies",

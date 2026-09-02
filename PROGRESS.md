@@ -4,9 +4,157 @@ Running state of the project. `plan.md` is the spec (what we intend to build);
 this file is the log (what is actually built, what is next, and what we decided
 along the way that the spec does not say).
 
-**Last updated:** 2026-09-02, session 5. Every phase in `plan.md` is done.
-Embeddings now run locally with no API key, and the bulk run is set up to
-happen on the TIK cluster.
+**Last updated:** 2026-09-02, session 6. Every phase in `plan.md` is done, and
+session 6 built nine extensions past it: places, closed postings, a European
+board, and the app surfaces that used to be CLI-only.
+
+---
+
+## Session 6, 2026-09-02: the extensions
+
+Nine things the author asked for in one session, in three commits. `plan.md`
+lost its Category A/B delegation boundary first, at the author's request --
+all nine reserved functions were written, so the rule had nothing left to
+protect. Phase 3 is now "Retrieval and agent core" and reads as an ordinary
+phase.
+
+### 1. Postings can be closed, and it costs nothing to notice
+
+`last_seen` was written on every ingest run and read by nothing, so a posting
+pulled from its board in July still ranked first and could still have a letter
+drafted for it. Every board here serves a company's *whole* list in one
+response, so whatever is absent from that response has been taken down --
+`ingest/runner.reconcile_closed` is that set difference and needs no extra
+request.
+
+Three rules it must not break, each with a test:
+
+* **never on a failed fetch.** The caller only reaches it after a successful
+  parse.
+* **never on an empty one.** A board answering 200 with nothing is far more
+  often broken than it is a company that fired everyone.
+* **never a delete.** An application, its letter and its history all point at
+  the posting, and one you applied to is the row you least want to lose.
+  `closed_at` is set; the row stays. Relisted postings reopen.
+
+Hidden from the grid by default, with `include closed` / `closed only` in the
+rail. A closed row shows "closed" where its status would be: that you can no
+longer apply outranks what you had decided about it.
+
+### 2. A location layer, so "Europe" can be asked
+
+`SearchFilters.location` was a substring match over the board's raw prose, so
+`tools.py` literally told the model to give up on "Europe" -- and `Zurich`,
+`Zürich`, `CH-Zurich` and `Zurich, Switzerland` were four different places.
+
+`core/locations.py` resolves a raw string into city / ISO country / region
+against an offline table (499 cities, 78 countries). A lookup table rather than
+a geocoder on purpose: the corpus is a few hundred cities, and a
+wrong-but-confident geocode is worse than an honest `None`.
+`ingest/locations.py` stores the result in `posting_locations` -- a table, not
+columns, because "London; Berlin" is two places and flattening it loses one.
+
+**Measured on the real corpus, and tuned against it rather than guessed:**
+85.5% resolved on the first pass, then 93.0%, 93.6%, and **97.7%** after
+fixing what the failures actually showed -- "Massachusetts - Boston" word
+order, `München` vs `Muenchen`, parenthetical asides, metro-area phrasings,
+multi-word US state names. 24,516 postings became 25,653 places.
+
+`cli locations --unresolved` is the worklist for going further: the strings the
+parser could not resolve, most common first. `--rebuild` re-runs the whole
+corpus after widening the tables.
+
+**"Europe + intern" now returns 173 postings.** It could not be expressed at
+all before.
+
+### 3. Personio, the first non-US board
+
+Greenhouse, Lever and Ashby are a US-startup corpus, which is why German was
+0.3% of chunks. `Praktikum` and `Werkstudent` postings live on Personio.
+
+Two vendor quirks, both handled inside the module because that is where vendor
+knowledge belongs:
+
+* **the feed is XML.** Personio's JSON endpoint (`/search.json`) returns every
+  field *except* the description -- verified empty on every board tried. A
+  posting with no body cannot be chunked, embedded or searched, so `/xml` it
+  is, parsed with stdlib ElementTree. `FEED_IS_XML` tells the runner.
+* **an unknown token answers 429, not 404**, with an HTML error page. Left
+  alone the polite client retries twice and reports a transient failure, so
+  discovery would record a company as `unresolved` and re-check it forever.
+  `NOT_FOUND_STATUSES` is how a module says otherwise.
+
+**Probed and deliberately not added**, recorded in `db.py` so nobody re-treads
+it: Recruitee (every token 404s), SmartRecruiters (200 with an empty list for
+*any* token, so a board cannot be verified and a typo looks alive), Workable
+(the widget returns the account but zero jobs for every board tried), Join
+(422 on the documented path).
+
+Seven Personio boards verified and ingested: 17 postings, 100% located,
+multi-office locations like `München; Köln` parsing into two places.
+
+### 4. `ready_to_submit` is retired
+
+It described a state of the author's intent rather than of the world, and
+"interested, not yet sent" already covered it. The one real thing it encoded --
+the letter is written, it just needs sending -- is
+`letter_path IS NOT NULL AND status = 'interested'`, which is a filter.
+`db.migrate()` moves surviving rows and writes a `status_history` entry, the
+same rule applied when `not_relevant` arrived. Gone from the ramp, the rail,
+the stats order and the keyboard bindings, which are now 1-5.
+
+### 5. `search_postings` is gone
+
+Two search tools with synonymous names is the worst possible case for a model
+choosing between them from descriptions alone -- and choosing wrong meant
+results were never recorded as `found`, so they were offered again forever.
+`find_postings` + `get_posting` cover the workflow. Four tools left.
+
+### 6-9. The app surfaces
+
+* **Manual postings** (`ingest/manual.py`, `POST/PUT/DELETE /api/postings`, a
+  dialog on the grid). LinkedIn and company-site applications had nowhere to
+  live, so `/stats` understated the pipeline and a reply from those companies
+  had no posting to be matched against. A manual posting is an ordinary row --
+  chunked, embedded, searched -- except that `source = manual` keeps it out of
+  `reconcile_closed`, and it is the only kind editable because it is the only
+  kind whose text nobody owns upstream.
+* **Letter revision** (`POST /api/letters/{id}/revise`, a message box under the
+  draft). Regenerating was the only option and it is the wrong shape: "make it
+  shorter" is a change to *this* letter. The grounding extracts go back into
+  the prompt unchanged, so a revision cannot invent a fact to fill a gap its
+  own edit opened. Sends the editor's contents, not the file, because hand
+  edits are real.
+* **Profile editing** (`/api/profile`, a `/profile` route). Editing
+  `profile/` in a text editor and forgetting `cli ingest-profile` left every
+  letter grounded in text that no longer existed, with nothing saying so.
+  Saving rewrites the file and re-chunks it in one request. Chunk *and*
+  embedded counts are both shown, because chunking is immediate and embedding
+  is not.
+* **Mailbox sync in the app** (`GET/POST /api/inbox/sync` over a background
+  job, a `check mail` button). This reverses the 2026-09-01 decision below,
+  and deliberately: that reasoning was right that a *request* must not wait on
+  Gmail, and a job with a status endpoint holds no request open. The property
+  that mattered is untouched and printed next to the button -- a sync only ever
+  writes suggestions.
+
+### Verified, not just tested
+
+* real database migrated in place; 24,516 postings located, 97.7% resolved
+* `region=europe&level=intern` -> 173 postings, through the Vite proxy
+* Personio discovery + ingest end to end, 17 German postings with real bodies
+* a manual posting: `Praktikum` -> `level=intern`, `Zürich` -> `CH`, findable
+  by country filter, deletable
+* **a real letter revision against the real model**: 385 words -> 247 on "make
+  it about a third shorter, keep every concrete project detail", every
+  specific kept (Cybiront, distributed attention, Research Analytics Services),
+  no invented facts, no new TODO markers
+* 389 backend tests (25 new), ruff clean, tsc clean, eslint 0 errors, build ok
+
+**Not verified: any of this in a browser.** The Chrome extension would not
+connect again, the same as session 4. The pages compile, the routes serve and
+the API answers through the Vite proxy, but nobody has looked at `/profile`,
+the new rail groups or the revision box with their eyes.
 
 ---
 
@@ -116,6 +264,37 @@ count or highest chunk id no longer matches the table.
 
 ## Resume here
 
+**The one thing worth doing first: 17 Personio postings are chunked but not
+embedded.** Session 6 ingested them and everything else in the corpus already
+has vectors, so:
+
+```
+cd backend
+uv run python -m agent_app.cli embed          # 63 chunks, a minute on the laptop
+```
+
+Then the German postings are searchable by meaning as well as keyword.
+
+**After that, in rough order of value:**
+
+1. **Look at it in a browser.** `/profile`, the rail's new region/country
+   groups, the closed-postings chips and the revision box under the letter
+   have never been seen. Everything compiles and serves; nobody has looked.
+2. **More European boards.** Personio is one, and it is the smallest of the
+   Greenhouse/Lever/Ashby-sized wins available. `cli discover --from llm
+   --query "..." --source personio` aimed at Swiss and German employers is the
+   cheap next step; the four vendors probed and rejected are listed in `db.py`
+   with the reason each failed, so re-investigating one is a known task rather
+   than a fresh one.
+3. **`cli locations --unresolved`** lists the 586 location strings the parser
+   still cannot resolve, most common first. A few lines added to `_CITY_TABLE`
+   plus `cli locations --rebuild` moves the number.
+4. **`data/eval/queries.jsonl` still does not exist.** Unchanged from session
+   5, and now more valuable: chunking, fusion *and* the place filters are all
+   things you can only tune against a number.
+
+---
+
 **Session 4, 2026-09-01: Phase 10 built, the last one.** Gmail sync, matching,
 classification, the `/inbox` review queue, `cli sync-email`. 290 main tests (57
 new) and 68 exercise tests pass; ruff, tsc, eslint and the frontend build are
@@ -189,6 +368,9 @@ suite is the regression test for anything rewritten.
 | 10 | Application tracking from email | Claude | ✅ done 2026-09-01 | |
 | 2.5 | Company discovery | Claude | ✅ done (crawl path unverified live) | |
 | — | Lever EU API host fix | Claude | ✅ done | |
+| — | Places, closed postings, Personio | Claude | ✅ done 2026-09-02 | `22470fc` |
+| — | Manual postings, revision, profile, sync | Claude | ✅ done 2026-09-02 | `5924c86` |
+| — | The dashboard for all of it | Claude | ✅ done 2026-09-02 | `e16ad34` |
 
 **Every phase in `plan.md` is now done.** What is left is not code: API keys,
 a labelled eval set, real write-ups in `profile/`, and the author's own rewrite
@@ -495,6 +677,10 @@ Small, deliberate, and worth knowing before someone "corrects" them.
 - **There is no route that runs a mailbox sync.** Fetching mail is slow,
   network-bound and holds credentials; it belongs to `cli sync-email`, not to
   a dashboard button that makes a page load wait on Google.
+  *Superseded 2026-09-02 (session 6):* there is now `POST /api/inbox/sync`,
+  which starts a background job and returns 202. The objection was to a
+  request waiting on Gmail, and a job with a status endpoint does not. `cli
+  sync-email` still works and is still the only way to do the OAuth login.
 - **An unrecognised sender never reaches the model.** `plan.md` says one model
   call per candidate email; an email from a company with no application is not
   a candidate, and classifying it would be money spent to learn nothing.
@@ -514,22 +700,27 @@ uv run python -m agent_app.cli ingest                    # fetch every board
 uv run python -m agent_app.cli embed --export ../data/pending.jsonl
 uv run python -m agent_app.cli embed --import ../data/vectors.npz
 uv run python -m agent_app.cli discover --from file --file names.txt
+uv run python -m agent_app.cli locations                 # parse places
+uv run python -m agent_app.cli locations --unresolved    # the worklist
 uv run python -m agent_app.cli status                    # the pipeline
 uv run python -m agent_app.cli companies                 # what was verified
 uv run python -m agent_app.cli sync-email --login        # once, then without
 ```
 
-The dashboard at <http://localhost:5173> is real: `/postings` lists all 24,516
-postings with working filters, keyboard navigation and status changes that
-persist; `/stats` shows the pipeline; `/inbox` is the email review queue, with
-the pending count in the nav. `/chat` and `/letters/:id` work once the keys are
-in and the corpus is embedded.
+The dashboard at <http://localhost:5173> is real: `/postings` lists the
+postings with working filters (now including region and country), keyboard
+navigation and status changes that persist, and a dialog for adding a posting
+by hand; `/profile` edits the write-ups letters are grounded in; `/stats` shows
+the pipeline; `/inbox` is the email review queue with a `check mail` button;
+`/letters/:id` drafts and revises. `/chat` works once the keys are in.
 
-**Data as of 2026-09-02:** **24,516 postings from 575 companies** across all 3
-sources, **135,871 chunks**, 5.5 per posting, **all embedded**. The cluster run
-did 135,851 chunks in 1.8 minutes at 1,254/s on an RTX 2080 Ti — the same work
-the laptop wanted 22 hours for. **348 main tests and 69 exercise tests pass**;
-ruff clean. A search takes about 2 seconds.
+**Data as of 2026-09-02, session 6:** **24,533 postings from 582 companies**
+across 4 sources, **135,934 chunks**, and **25,653 parsed places on 24,516
+postings, 97.7% resolved to a country or region**. 6,647 postings in Europe;
+"Europe + intern" is 173. Everything is embedded except the 17 Personio
+postings ingested at the end of the session (63 chunks). **389 main tests and
+69 exercise tests pass**; ruff, tsc and eslint clean. A search takes about
+2 seconds.
 
 The 5,149-postings-from-22-companies figure recorded on 2026-09-01 was
 overtaken by a later ingest run that nobody logged. Anything quoting it is
@@ -551,13 +742,25 @@ stale, including the phase-4 cost estimates.
   permanent fix is moving the project out of OneDrive.
 - **Whether discovery leftovers get an agentic retry loop** (design discussed,
   not decided).
+- **Four ATS vendors were probed and rejected on 2026-09-02** — Recruitee,
+  SmartRecruiters, Workable, Join. Each failed differently and each is
+  recorded in `db.py` next to `BOARD_SOURCES`. Any of them would widen the
+  European corpus considerably if the real endpoint were found.
+- **Personio publishes no company display name**, so a Personio company is
+  named by whatever the caller already had rather than by the board. Every
+  other source takes the name from the board's own response, which is the rule
+  `plan.md` asks for. Harmless today because names come from the discovery
+  input; worth knowing before trusting `companies.name` for Personio.
 - **The classifier's prompt has never met the real model.** Like the agent's
   `SYSTEM_PROMPT`, `inbox/classify.py`'s is a first guess. The thing to watch
   once it runs on a real mailbox is whether confidences spread out or pile up
   at 0.9 — `MIN_CONFIDENCE` and the "`other` is a first-class answer" framing
   are the two dials.
-- **`/inbox` has not been seen in a browser.** It serves and the proxy works;
-  the Chrome extension would not connect to look at it.
+- **Nothing built in sessions 4-6 has been seen in a browser.** `/inbox`,
+  `/profile`, the rail's region and country groups, the closed-posting chips,
+  the add-a-posting dialog and the letter revision box all serve and the Vite
+  proxy is verified, but the Chrome extension would not connect in either
+  session. This is the largest untested surface in the project.
 - **`core/agent.py` is Claude's version, and the author plans to replace it.**
   Its `SYSTEM_PROMPT` in particular is a first guess that has never been run
   against the real model.
