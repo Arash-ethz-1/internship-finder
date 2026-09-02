@@ -203,7 +203,15 @@ CREATE INDEX IF NOT EXISTS idx_postings_company ON postings(company);
 CREATE INDEX IF NOT EXISTS idx_postings_level   ON postings(level);
 CREATE INDEX IF NOT EXISTS idx_postings_source  ON postings(source);
 CREATE INDEX IF NOT EXISTS idx_postings_seen    ON postings(last_seen);
-CREATE INDEX IF NOT EXISTS idx_postings_closed  ON postings(closed_at);
+
+-- The grid's default query, in one index: open postings, newest first.
+--
+-- It replaces a plain index on `closed_at`, which was actively harmful. Almost
+-- every posting is open, so `closed_at` alone filters nothing -- but the
+-- planner still chose it, and then had to sort five thousand rows in a temp
+-- B-tree because nothing indexed `posted_at`. That was 9.9 seconds a page.
+-- With both columns in sort order it is 0.6.
+CREATE INDEX IF NOT EXISTS idx_postings_open_recent ON postings(closed_at, posted_at DESC);
 
 -- One row per place a posting is offered in. A table rather than columns on
 -- `postings` because multi-location postings are ordinary -- "Zurich; London",
@@ -238,6 +246,11 @@ CREATE INDEX IF NOT EXISTS idx_chunks_posting ON chunks(posting_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_profile ON chunks(profile_doc);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_vector_row
     ON chunks(vector_row) WHERE vector_row IS NOT NULL;
+
+-- Counting chunks that still need a vector. A partial index holds only those
+-- rows, so the count is instant once the corpus is embedded, rather than a
+-- 136,000-row scan on every /api/stats.
+CREATE INDEX IF NOT EXISTS idx_chunks_unembedded ON chunks(id) WHERE vector_row IS NULL;
 
 CREATE TABLE IF NOT EXISTS applications (
     posting_id  TEXT PRIMARY KEY REFERENCES postings(id) ON DELETE CASCADE,
@@ -348,6 +361,9 @@ def init_db(conn: sqlite3.Connection) -> None:
     _add_missing_columns(conn)
     with conn:
         conn.executescript(SCHEMA)
+    # After the script, so the replacement index exists before its predecessor
+    # goes away and there is never a window with neither.
+    _drop_stale_indexes(conn)
     _migrate_retired_statuses(conn)
 
 
@@ -356,6 +372,11 @@ def init_db(conn: sqlite3.Connection) -> None:
 # explicit ALTER. Adding a nullable column to SQLite is instant regardless of
 # table size.
 _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("postings", "closed_at", "TEXT"),)
+
+# Indexes that turned out to be wrong and are replaced by something in SCHEMA.
+# Dropped rather than left in place: a redundant index still costs every write,
+# and this one actively misled the query planner. See `idx_postings_open_recent`.
+_DROPPED_INDEXES: tuple[str, ...] = ("idx_postings_closed",)
 
 
 def migrate(conn: sqlite3.Connection) -> list[str]:
@@ -366,7 +387,25 @@ def migrate(conn: sqlite3.Connection) -> list[str]:
     deliberately small: this project has one database on one machine, so a
     migration framework would be more moving parts than the problem has.
     """
-    return [*_add_missing_columns(conn), *_migrate_retired_statuses(conn)]
+    return [
+        *_add_missing_columns(conn),
+        *_drop_stale_indexes(conn),
+        *_migrate_retired_statuses(conn),
+    ]
+
+
+def _drop_stale_indexes(conn: sqlite3.Connection) -> list[str]:
+    """Remove indexes a later schema replaced."""
+    applied: list[str] = []
+    for name in _DROPPED_INDEXES:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?", (name,)
+        ).fetchone()
+        if exists:
+            with conn:
+                conn.execute(f"DROP INDEX IF EXISTS {name}")
+            applied.append(f"{name} dropped")
+    return applied
 
 
 def _add_missing_columns(conn: sqlite3.Connection) -> list[str]:
@@ -454,6 +493,16 @@ class PostingFilters:
     include_closed: bool = False
     only_closed: bool = False
 
+
+# What the grid actually renders, named explicitly rather than `p.*`.
+#
+# `body` is the reason: it averages 5 kB, the grid shows none of it, and a page
+# of five thousand rows was therefore pulling ~26 MB out of SQLite to throw
+# away. The detail panel fetches one posting at a time and gets the body there.
+GRID_COLUMNS = (
+    "p.id, p.source, p.company, p.title, p.location, p.remote, p.url, "
+    "p.posted_at, p.deadline, p.level, p.first_seen, p.last_seen, p.closed_at"
+)
 
 SORTABLE = {
     "posted_at": "p.posted_at",
@@ -546,7 +595,7 @@ def list_postings(
     column = SORTABLE.get(sort, SORTABLE["posted_at"])
     direction = "DESC" if descending else "ASC"
     rows = conn.execute(
-        f"SELECT p.*, COALESCE(a.status, 'untriaged') AS status, a.note, a.letter_path "
+        f"SELECT {GRID_COLUMNS}, COALESCE(a.status, 'untriaged') AS status, a.note, a.letter_path "
         f"{base} ORDER BY {column} {direction} NULLS LAST, p.id LIMIT ? OFFSET ?",
         [*params, limit, offset],
     ).fetchall()

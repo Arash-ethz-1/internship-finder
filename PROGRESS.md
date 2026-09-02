@@ -138,6 +138,39 @@ results were never recorded as `found`, so they were offered again forever.
   that mattered is untouched and printed next to the button -- a sync only ever
   writes suggestions.
 
+### The postings grid was taking ten seconds
+
+Reported 2026-09-03 as "loading postings... for minutes". Measured, per page
+of 5,000 rows:
+
+| | before | after |
+|---|---|---|
+| `list_postings` | 6.89s | 0.47s |
+| `places_for` | 0.31s | 0.10s |
+| `stats()` | 3.48s | 0.65s |
+
+Two causes, one of them mine.
+
+**`idx_postings_closed` was actively harmful.** Added the same day for the
+closed-posting filter, and almost every posting is open — so as a lookup it
+excludes nothing, but the planner chose it anyway and then sorted 5,000 rows in
+a temp B-tree, because *nothing indexed `posted_at`* and that is the default
+sort. Replaced by `idx_postings_open_recent (closed_at, posted_at DESC)`,
+which serves the filter and the ordering from one structure. `migrate()` drops
+the old one: a redundant index still costs every write.
+
+**The grid was selecting `p.*`.** Bodies average 5.2 kB and the grid renders
+none of them, so a page pulled roughly 26 MB out of SQLite to discard it.
+`GRID_COLUMNS` names what the grid actually shows; the detail panel still
+fetches the body one posting at a time.
+
+Also `idx_chunks_unembedded`, a partial index over chunks with no vector, so
+the `pending_embedding` count in `/api/stats` stops scanning 136,000 rows.
+
+The lesson worth keeping: an index added for a filter can make an unrelated
+sort dramatically worse, and `EXPLAIN QUERY PLAN` says so immediately —
+`USE TEMP B-TREE FOR ORDER BY` was the whole diagnosis.
+
 ### Verified, not just tested
 
 * real database migrated in place; 24,516 postings located, 97.7% resolved
@@ -263,6 +296,14 @@ count or highest chunk id no longer matches the table.
   the author's.
 
 ## Resume here
+
+**Phase 11 is new in `plan.md`: make the retrieval agentic.** Added 2026-09-03
+after the author observed that the agent only parses the request into a filter
+and searches once — which is true, and is a design problem rather than a prompt
+problem. Five steps, ordered; the first (read your own results and search
+again) is worth more than the rest combined. It is deliberately gated on the
+eval set, because steps 1 and 2 cost 2-4x the model calls and there is
+currently no way to tell whether they helped.
 
 **The one thing worth doing first: 17 Personio postings are chunked but not
 embedded.** Session 6 ingested them and everything else in the corpus already

@@ -575,6 +575,85 @@ one moves the status and writes history naming the message.
 
 ---
 
+### Phase 11 — Make the retrieval agentic
+
+The complaint that motivates this, in the author's words: *"the agent is doing
+the least while searching — all it does is turn 'find ML research in Zurich'
+into query='ml research', location='Zurich', and a normal retrieval system with
+a filter box would do that too."*
+
+That is correct, and it is a design problem rather than a prompt problem. One
+tool call with parsed arguments is natural-language-to-query translation. The
+loop never makes a decision, so nothing about it is agentic: the model reads
+the request, fills in a form, and reports whatever comes back.
+
+Each step below adds one decision to the loop. They are ordered by how much
+they change that, and the first is worth more than the rest combined.
+
+**1. The agent reads its own results and searches again.**
+
+Today `find_postings` fires once and its output is the answer. Give the loop a
+stopping condition instead: search, look at the top handful, judge whether they
+are the thing that was asked for, and re-query with different words when they
+are not.
+
+This is the failure already recorded in `PROGRESS.md` — *"AI internships in
+Europe"* matched boilerplate everywhere, because "AI" is a filler word in 2026
+postings. Measured directly at the time: `machine learning research internship`
+returns IMC, Perplexity and Cohere in the top eight, and `AI internship`
+returns none of them. A person notices that in two seconds and rephrases. The
+agent currently cannot, because it never looks.
+
+Needs: a `max_searches` budget in the loop, and a system prompt that says a
+first search is a hypothesis rather than an answer.
+
+**2. Several queries per request, fused.**
+
+"ML research in Zurich" should become three or four phrasings — *machine
+learning research intern*, *deep learning research*, *computer vision PhD
+internship* — scored separately and fused into one ranking. One phrasing is a
+lottery ticket on vocabulary, which is exactly what step 1 keeps discovering
+the hard way.
+
+`fuse` already combines N score lists; it does not care whether they came from
+two retrieval methods or six queries.
+
+**3. A tool that says what the corpus actually holds.**
+
+`corpus_stats(filters)` — how many postings match these constraints at all,
+across how many companies. When Zurich holds 199 postings from 15 companies,
+the honest answer is *"that is the ceiling, here is all of it"*, not a
+confident top ten implying selection took place. Cheap to build, and it is what
+lets the agent say "there is not much here", which it currently cannot express.
+
+**4. The query should know who is asking.**
+
+The agent has no idea what the author has built. "ML research" could be
+expanded with their own vocabulary — distributed attention, GNNs, sensor fusion
+— before it is searched. `search_profile(query)` over the same corpus the
+letter drafter already retrieves from, which is today invisible to `/chat`.
+
+**5. Use the triage history as relevance labels.**
+
+The most differentiated of these, and it needs no new data. `not_relevant` and
+`interested` rows are a labelled relevance set produced by ordinary use — 149
+postings had been passed on by 2026-09-02. An agent that can query it ("the
+last thirty you rejected were all quant roles") can drop its own false
+positives before showing anything. No generic RAG pipeline has this.
+
+**Order this in with the eval set, not after it.** Steps 1 and 2 cost two to
+four times the model calls per search, and without `data/eval/queries.jsonl`
+there is no way to tell whether they helped — "it feels better" is exactly what
+this phase is supposed to stop being the standard of evidence. Write a few
+dozen labelled queries first, take a `recall_at_k` reading, then build.
+
+**Check:** `cli eval` reports a better `recall_at_k` than the single-shot
+baseline on the same labelled set, and the trace panel shows more than one
+search for a query that deserves it. A step that does not move the number is
+reverted rather than kept for being clever.
+
+---
+
 ## Non-goals
 
 Do not build these, do not scaffold them, do not leave TODOs for them:
