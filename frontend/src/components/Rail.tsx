@@ -70,7 +70,7 @@ function Radio({
  * `tracked` is gone from here. It was a group masquerading as a member, and
  * the presets below say the same thing without the category error.
  */
-const STATUS_CHOICES = [
+export const STATUS_CHOICES = [
   "untriaged",
   "found",
   "interested",

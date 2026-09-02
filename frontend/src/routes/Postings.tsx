@@ -17,9 +17,14 @@ import {
   type Status,
 } from "../api/client";
 import { DetailPanel } from "../components/DetailPanel";
-import { ON_MY_LIST, Rail } from "../components/Rail";
+import { ON_MY_LIST, Rail, STATUS_CHOICES } from "../components/Rail";
 import { EmptyState, ErrorState, LoadingState } from "../components/states";
 import { STATUS_KEYS, StatusDot, statusStyle } from "../components/status";
+import {
+  loadFilters,
+  sameStatuses,
+  saveFilters,
+} from "../state/postingFilters";
 
 /**
  * The primary view, and the one that must feel fast.
@@ -53,10 +58,13 @@ export function Postings() {
   // The grid is the working list, not the pile: it shows what you decided
   // something about, minus what you decided against. `ON_MY_LIST` is that set;
   // without it, opening this view means scrolling 24,000 rows nobody chose.
-  const [query, setQuery] = useState<PostingQuery>({
+  // Lazy initialiser: the rail's settings are read from this browser once, on
+  // mount, and a first visit falls back to the default view.
+  const [query, setQuery] = useState<PostingQuery>(() => ({
     limit: 5000,
     status: ON_MY_LIST,
-  });
+    ...loadFilters(STATUS_CHOICES),
+  }));
   const [cursor, setCursor] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -91,7 +99,13 @@ export function Postings() {
   });
 
   const patch = useCallback((next: Partial<PostingQuery>) => {
-    setQuery((current) => ({ ...current, ...next, offset: 0 }));
+    setQuery((current) => {
+      const updated = { ...current, ...next, offset: 0 };
+      // Written here rather than in an effect: this is the only place a filter
+      // changes, and an effect would also fire for the initial load.
+      saveFilters(updated);
+      return updated;
+    });
     setCursor(0);
   }, []);
 
@@ -185,7 +199,7 @@ export function Postings() {
           <EmptyState
             title="No postings match"
             detail={
-              query.status === ON_MY_LIST && !query.q && !query.level
+              sameStatuses(query.status, ON_MY_LIST) && !query.q && !query.level
                 ? "Nothing is on your list yet. Search on the chat page and keep what looks right — anything you keep shows up here."
                 : "Nothing matches these filters. Clear one from the left rail."
             }

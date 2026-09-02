@@ -275,6 +275,16 @@ full strength.
    one deliberate click, worth waiting through a busy minute for.
    `inbox/classify.py` already caught broadly, so a sync degrades on its own.
 
+8. **The rail's filters are remembered between visits.** Unchecking `found`
+   and finding it checked again after a reload is the app disagreeing with you
+   about what you want to look at. `state/postingFilters.ts` keeps them in
+   `localStorage` — status, level, source, company, location, remote — and
+   deliberately not the free-text box, which is a thing you are doing rather
+   than a standing decision. Every remembered key is written, `null` where
+   unset, so "clear filters" survives a reload instead of reverting to the
+   default. A status saved by an older build that no longer exists is dropped
+   on load rather than sent to the API as a 422.
+
 ### The email pipeline has now run end to end
 
 Verified 2026-09-02 against the real mailbox. A test rejection naming
