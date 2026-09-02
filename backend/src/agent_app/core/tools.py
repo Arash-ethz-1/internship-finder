@@ -82,8 +82,10 @@ def find_postings(
 
     Two rules make the list usable across several searches:
 
-    * only untriaged postings are considered, so anything already in the
-      pipeline is never offered twice;
+    * only *undecided* postings are considered — never triaged, or surfaced by
+      an earlier search and not judged since. Anything you actually decided
+      something about is never offered twice; anything you merely walked past
+      comes back, because walking past a result is not a decision;
     * every posting returned is recorded as ``found``, with a history entry
       naming the query that surfaced it.
 
@@ -92,7 +94,7 @@ def find_postings(
     person still decides whether it becomes ``interested``.
     """
     limit = max(1, min(int(limit), 100))
-    parsed = SearchFilters.from_dict({**(filters or {}), "kind": "posting", "status": "untriaged"})
+    parsed = SearchFilters.from_dict({**(filters or {}), "kind": "posting", "status": "undecided"})
     hits = retrieval.search(query, parsed, k=limit * FIND_OVERSAMPLE)
 
     # Collapse chunks onto their posting, keeping each posting's best rank.
@@ -229,6 +231,47 @@ def update_status(posting_id: str, status: str, note: str = "") -> dict[str, Any
         "from_status": from_status,
         "status": status,
         "note": note,
+        "updated_at": changed_at,
+    }
+
+
+def reset_status(posting_id: str, note: str = "") -> dict[str, Any]:
+    """Forget everything about a posting and put it back in the pool.
+
+    Deletes the ``applications`` row rather than moving it to some "cleared"
+    status, because untriaged is the absence of a row -- that is what
+    :func:`find_postings` looks for, and a posting you have genuinely undecided
+    should be offered again like any other.
+
+    The history entry stays. It records ``to_status = 'untriaged'``, so
+    changing your mind is visible afterwards instead of leaving a gap where a
+    decision used to be. Resetting something that has no row is not an error;
+    it is already in the state you asked for.
+    """
+    conn = get_db()
+    if conn.execute("SELECT 1 FROM postings WHERE id = ?", (posting_id,)).fetchone() is None:
+        raise KeyError(f"No posting with id {posting_id!r}")
+
+    previous = conn.execute(
+        "SELECT status FROM applications WHERE posting_id = ?", (posting_id,)
+    ).fetchone()
+    from_status = previous["status"] if previous else None
+    changed_at = now_iso()
+
+    with conn:
+        conn.execute("DELETE FROM applications WHERE posting_id = ?", (posting_id,))
+        if from_status is not None:
+            conn.execute(
+                "INSERT INTO status_history (posting_id, from_status, to_status, note, changed_at) "
+                "VALUES (?, ?, 'untriaged', ?, ?)",
+                (posting_id, from_status, note or "reset to untriaged", changed_at),
+            )
+
+    return {
+        "posting_id": posting_id,
+        "from_status": from_status,
+        "status": "untriaged",
+        "note": "",
         "updated_at": changed_at,
     }
 

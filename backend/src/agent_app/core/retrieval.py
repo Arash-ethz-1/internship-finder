@@ -43,6 +43,12 @@ BM25_B = 0.75
 # The keys of `SearchHit.component_scores`. The frontend draws one stacked bar
 # segment per key, so these strings are a wire contract: changing them changes
 # the dashboard.
+# Not statuses in the database: ways of asking about the absence of a decision.
+# "untriaged" is no application row at all; "undecided" also admits `found`,
+# which records that a search surfaced a posting rather than what you think
+# of it.
+PSEUDO_STATUSES: tuple[str, ...] = ("untriaged", "undecided")
+
 COMPONENT_DENSE = "dense"
 COMPONENT_BM25 = "bm25"
 
@@ -86,7 +92,7 @@ class SearchFilters:
             raise ValueError(f"kind must be one of {self.KINDS}, got {self.kind!r}")
         if self.level is not None and self.level not in LEVELS:
             raise ValueError(f"level must be one of {LEVELS}, got {self.level!r}")
-        if self.status is not None and self.status not in (*STATUSES, "untriaged"):
+        if self.status is not None and self.status not in (*STATUSES, *PSEUDO_STATUSES):
             raise ValueError(f"unknown status {self.status!r}")
 
     @classmethod
@@ -204,6 +210,11 @@ def candidate_sql(filters: SearchFilters, *, with_text: bool = True) -> tuple[st
         params.extend(filters.posting_ids)
     if filters.status == "untriaged":
         where.append("a.posting_id IS NULL")
+    elif filters.status == "undecided":
+        # Never triaged, or surfaced by a search and not judged since. A
+        # posting the agent found and you walked past is still undecided, so
+        # the next search has to be able to offer it again.
+        where.append("(a.posting_id IS NULL OR a.status = 'found')")
     elif filters.status:
         where.append("a.status = ?")
         params.append(filters.status)

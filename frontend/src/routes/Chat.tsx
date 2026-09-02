@@ -118,14 +118,13 @@ export function Chat() {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {turns.map((turn, index) => {
-          const { steps, text, error } = reduceEvents(turn.events);
+          const { blocks, error } = reduceEvents(turn.events);
           return (
             <article key={index} className="mb-8">
               <p className="font-mono text-2xs text-text-faint">you asked</p>
               <p className="mt-0.5 text-sm">{turn.question}</p>
               <Trace
-                steps={steps}
-                text={text}
+                blocks={blocks}
                 error={error}
                 running={running && index === turns.length - 1}
               />

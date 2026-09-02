@@ -21,40 +21,69 @@ export interface TraceStep {
 }
 
 /** Fold the event stream into the steps the panel renders. */
+/** A turn, in the order it happened: the agent's own words and its tool calls
+ *  interleaved. Collecting all the text into one blob and printing it under
+ *  the results put "let me check the postings" *after* the postings. */
+export type TraceBlock =
+  | { kind: "text"; id: number; text: string }
+  | { kind: "step"; id: number; step: TraceStep };
+
 export function reduceEvents(events: AgentEvent[]): {
   steps: TraceStep[];
+  blocks: TraceBlock[];
   text: string;
   error: string | null;
   done: boolean;
 } {
   const steps: TraceStep[] = [];
+  const blocks: TraceBlock[] = [];
   let text = "";
   let error: string | null = null;
   let done = false;
 
   for (const event of events) {
     switch (event.kind) {
-      case "tool_call":
-        steps.push({
+      case "tool_call": {
+        const step: TraceStep = {
           id: steps.length,
           name: event.name,
           input: event.input,
           pending: true,
-        });
+        };
+        steps.push(step);
+        blocks.push({ kind: "step", id: blocks.length, step });
         break;
+      }
       case "tool_result": {
         // Fill in the most recent pending call with this name.
         for (let i = steps.length - 1; i >= 0; i--) {
           if (steps[i].pending && steps[i].name === event.name) {
-            steps[i] = { ...steps[i], output: event.output, ms: event.ms, pending: false };
+            const filled = {
+              ...steps[i],
+              output: event.output,
+              ms: event.ms,
+              pending: false,
+            };
+            steps[i] = filled;
+            const at = blocks.findIndex(
+              (b) => b.kind === "step" && b.step.id === filled.id,
+            );
+            if (at >= 0) blocks[at] = { kind: "step", id: at, step: filled };
             break;
           }
         }
         break;
       }
-      case "text":
+      case "text": {
         text += event.delta;
+        // One block per contiguous run of text, so a sentence written before a
+        // tool call stays above it.
+        const last = blocks[blocks.length - 1];
+        if (last && last.kind === "text") last.text += event.delta;
+        else
+          blocks.push({ kind: "text", id: blocks.length, text: event.delta });
         break;
+      }
       case "done":
         done = true;
         break;
@@ -64,7 +93,7 @@ export function reduceEvents(events: AgentEvent[]): {
     }
   }
 
-  return { steps, text, error, done };
+  return { steps, blocks, text, error, done };
 }
 
 /** `find_postings` returns whole postings; a posting_id with no chunk_id is
@@ -73,7 +102,10 @@ function postingsFrom(output: unknown): FoundPosting[] {
   if (!Array.isArray(output)) return [];
   return output.filter(
     (item): item is FoundPosting =>
-      typeof item === "object" && item !== null && "posting_id" in item && "excerpt" in item,
+      typeof item === "object" &&
+      item !== null &&
+      "posting_id" in item &&
+      "excerpt" in item,
   );
 }
 
@@ -110,7 +142,10 @@ function ToolStep({ step }: { step: TraceStep }) {
         <div className="mt-3 space-y-2">
           <ScoreLegend />
           {hits.map((hit) => (
-            <div key={hit.chunk_id} className="grid grid-cols-[1fr_14rem] items-center gap-3">
+            <div
+              key={hit.chunk_id}
+              className="grid grid-cols-[1fr_14rem] items-center gap-3"
+            >
               <div className="min-w-0">
                 <div className="truncate font-mono text-2xs text-text-faint">
                   #{hit.rank} {hit.posting_id ?? hit.profile_doc}
@@ -125,23 +160,24 @@ function ToolStep({ step }: { step: TraceStep }) {
 
       {postings.length > 0 && <ResultList key={step.id} postings={postings} />}
 
-      {!step.pending && hits.length === 0 && postings.length === 0 && step.output !== undefined && (
-        <pre className="mt-2 max-h-40 overflow-auto font-mono text-2xs text-text-muted">
-          {JSON.stringify(step.output, null, 2)}
-        </pre>
-      )}
+      {!step.pending &&
+        hits.length === 0 &&
+        postings.length === 0 &&
+        step.output !== undefined && (
+          <pre className="mt-2 max-h-40 overflow-auto font-mono text-2xs text-text-muted">
+            {JSON.stringify(step.output, null, 2)}
+          </pre>
+        )}
     </li>
   );
 }
 
 export function Trace({
-  steps,
-  text,
+  blocks,
   error,
   running,
 }: {
-  steps: TraceStep[];
-  text: string;
+  blocks: TraceBlock[];
   error: string | null;
   running: boolean;
 }) {
@@ -151,26 +187,28 @@ export function Trace({
         <div className="font-medium">The agent could not run</div>
         <p className="mt-1 text-text-muted">{error}</p>
         <p className="mt-3 text-text-faint">
-          This is expected until <span className="font-mono">run_agent</span> is written. Everything
-          else — the postings grid, filters, status changes — works now.
+          This is expected until <span className="font-mono">run_agent</span> is
+          written. Everything else — the postings grid, filters, status changes
+          — works now.
         </p>
       </div>
     );
   }
 
-  if (steps.length === 0 && !text && !running) return null;
+  if (blocks.length === 0 && !running) return null;
 
   return (
     <div>
-      {steps.length > 0 && (
-        <ol className="border-t border-hairline">
-          {steps.map((step) => (
-            <ToolStep key={step.id} step={step} />
-          ))}
-        </ol>
+      {blocks.map((block) =>
+        block.kind === "text" ? (
+          <Answer key={block.id} text={block.text} />
+        ) : (
+          <ol key={block.id} className="mt-4 border-t border-hairline">
+            <ToolStep step={block.step} />
+          </ol>
+        ),
       )}
-      {text && <Answer text={text} />}
-      {running && steps.length === 0 && !text && (
+      {running && blocks.length === 0 && (
         <p className="py-3 font-mono text-2xs text-text-faint">thinking…</p>
       )}
     </div>

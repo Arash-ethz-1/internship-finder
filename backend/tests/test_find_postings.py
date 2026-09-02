@@ -39,7 +39,10 @@ def test_find_postings_records_what_it_returned(conn: sqlite3.Connection, monkey
     chunk_pending_postings(conn)
 
     def fake_search(query, filters, k=10):
-        assert filters.status == "untriaged", "must never offer a triaged posting"
+        assert filters.status == "undecided", (
+            "must never offer a posting you decided something about — but a "
+            "posting an earlier search merely surfaced has to come back"
+        )
         rows = conn.execute("SELECT id, posting_id, text FROM chunks ORDER BY id").fetchall()
         return [
             retrieval.SearchHit(

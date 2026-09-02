@@ -25,15 +25,20 @@
   /* `found` is provenance, not a decision: a search surfaced it and nobody
      has judged it yet. Faintest thing on the ramp, so a list of thirty of
      them never competes with the handful that were actually chosen. */
-  --status-found: #a3a7ad;
-  --status-interested: #6b7078;
-  --status-ready-to-submit: var(--signal);
-  --status-applied: #5a6b7c;
-  --status-interviewing: #b07d2b;
-  --status-offer: #4c8c3f;
-  --status-rejected: #6b7078;
-  --status-declined: #6b7078;
-  --status-not-relevant: #9aa0a8;
+  /* Every stage is its own hue. `interested` and `applied` were two shades of
+     the same grey, which made the two halves of the pipeline — considering
+     something, and having sent it — indistinguishable at a glance. Still
+     muted: these read against paper and ink, they do not compete with the
+     signal accent. */
+  --status-found: #a3a7ad; /* neutral: a search surfaced it, you have not looked */
+  --status-interested: #7a6e9e; /* indigo: on your radar */
+  --status-ready-to-submit: var(--signal); /* the one action state */
+  --status-applied: #3e7ca6; /* blue: it is out of your hands */
+  --status-interviewing: #b07d2b; /* amber: in progress */
+  --status-offer: #4c8c3f; /* green: good news */
+  --status-rejected: #a15a50; /* muted red: a door closed on you */
+  --status-declined: #7a6f66; /* warm grey: a door you closed */
+  --status-not-relevant: #9aa0a8; /* grey: you passed on it */
   --status-faded-opacity: 0.45; /* rejected and declined */
 
   /* Semantic, light mode */
@@ -57,11 +62,19 @@
     --text-muted: #9aa0a8;
     --text-faint: #6b7078;
     --status-found: #5a5f66;
+    --status-interested: #9c8fc4;
+    --status-applied: #5fa3d0;
+    --status-rejected: #c4796e;
+    --status-declined: #8e8279;
   }
 }
 
 :root[data-theme="dark"] {
   --status-found: #5a5f66;
+  --status-interested: #9c8fc4;
+  --status-applied: #5fa3d0;
+  --status-rejected: #c4796e;
+  --status-declined: #8e8279;
   --surface: var(--ink);
   --surface-raised: #1a1d24;
   --surface-sunken: #101216;

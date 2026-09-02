@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
 
-import { getPosting, setStatus, type Status } from "../api/client";
+import { clearStatus, getPosting, setStatus, type Status } from "../api/client";
 import { ErrorState, LoadingState } from "./states";
 import { STATUS_KEYS, STATUS_LABELS, StatusLabel, statusStyle } from "./status";
 
@@ -9,7 +9,13 @@ import { STATUS_KEYS, STATUS_LABELS, StatusLabel, statusStyle } from "./status";
  * The right panel. Slides in over the grid rather than navigating away, so
  * the row you were on stays where it was.
  */
-export function DetailPanel({ id, onClose }: { id: string; onClose: () => void }) {
+export function DetailPanel({
+  id,
+  onClose,
+}: {
+  id: string;
+  onClose: () => void;
+}) {
   const queryClient = useQueryClient();
   const { data, isPending, error } = useQuery({
     queryKey: ["posting", id],
@@ -18,6 +24,18 @@ export function DetailPanel({ id, onClose }: { id: string; onClose: () => void }
 
   const mutate = useMutation({
     mutationFn: (status: Status) => setStatus(id, status),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["posting", id] });
+      void queryClient.invalidateQueries({ queryKey: ["postings"] });
+      void queryClient.invalidateQueries({ queryKey: ["stats"] });
+    },
+  });
+
+  // Untriaged is the absence of an application row, so this deletes rather
+  // than setting yet another status. It is what puts a posting back in front
+  // of the next search.
+  const clear = useMutation({
+    mutationFn: () => clearStatus(id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["posting", id] });
       void queryClient.invalidateQueries({ queryKey: ["postings"] });
@@ -68,7 +86,8 @@ export function DetailPanel({ id, onClose }: { id: string; onClose: () => void }
                   }`}
                   title={`Press ${index + 1}`}
                 >
-                  <span className="text-text-faint">{index + 1}</span> {STATUS_LABELS[status]}
+                  <span className="text-text-faint">{index + 1}</span>{" "}
+                  {STATUS_LABELS[status]}
                 </button>
               );
             })}
@@ -84,7 +103,21 @@ export function DetailPanel({ id, onClose }: { id: string; onClose: () => void }
             >
               declined
             </button>
+            <button
+              type="button"
+              onClick={() => clear.mutate()}
+              disabled={clear.isPending || data.status === "untriaged"}
+              className="rounded-xs border border-hairline px-2 py-1 font-mono text-2xs text-text-faint hover:border-signal hover:text-signal disabled:opacity-35"
+              title="Forget this decision. The posting goes back in the pool and a later search can offer it again."
+            >
+              {clear.isPending ? "clearing…" : "clear"}
+            </button>
           </div>
+          {(mutate.error || clear.error) && (
+            <p className="mt-2 font-mono text-2xs text-status-interviewing">
+              Nothing changed: {(mutate.error ?? clear.error)?.message}
+            </p>
+          )}
 
           <div className="mt-3 flex items-center gap-4">
             <StatusLabel status={data.status} />
@@ -111,14 +144,19 @@ export function DetailPanel({ id, onClose }: { id: string; onClose: () => void }
               </div>
               <ol className="space-y-1">
                 {data.history.map((change, index) => (
-                  <li key={index} className="flex gap-3 font-mono text-2xs text-text-muted">
+                  <li
+                    key={index}
+                    className="flex gap-3 font-mono text-2xs text-text-muted"
+                  >
                     <span className="tabular-nums text-text-faint">
                       {change.changed_at.slice(0, 10)}
                     </span>
                     <span>
                       {change.from_status ?? "untriaged"} → {change.to_status}
                     </span>
-                    {change.note && <span className="text-text-faint">{change.note}</span>}
+                    {change.note && (
+                      <span className="text-text-faint">{change.note}</span>
+                    )}
                   </li>
                 ))}
               </ol>

@@ -14,7 +14,10 @@ import type { StatusOrUntriaged } from "../api/client";
  * `not_relevant` is you passing on a posting. `rejected` is a company passing
  * on you. They look different because they mean different things.
  */
-const STYLES: Record<StatusOrUntriaged, { dot: string; chip: string; dim?: boolean }> = {
+const STYLES: Record<
+  StatusOrUntriaged,
+  { dot: string; chip: string; dim?: boolean }
+> = {
   untriaged: {
     dot: "bg-transparent border border-hairline",
     chip: "border-hairline text-text-faint",
@@ -30,7 +33,7 @@ const STYLES: Record<StatusOrUntriaged, { dot: string; chip: string; dim?: boole
   },
   interested: {
     dot: "bg-status-interested",
-    chip: "border-status-interested/40 bg-status-interested/8 text-text",
+    chip: "border-status-interested/50 bg-status-interested/10 text-status-interested",
   },
   ready_to_submit: {
     dot: "bg-status-ready-to-submit",
@@ -50,12 +53,12 @@ const STYLES: Record<StatusOrUntriaged, { dot: string; chip: string; dim?: boole
   },
   rejected: {
     dot: "bg-status-rejected",
-    chip: "border-hairline text-text-muted",
+    chip: "border-status-rejected/45 bg-status-rejected/8 text-status-rejected",
     dim: true,
   },
   declined: {
     dot: "bg-status-declined",
-    chip: "border-hairline text-text-muted",
+    chip: "border-status-declined/45 text-text-muted",
     dim: true,
   },
 };

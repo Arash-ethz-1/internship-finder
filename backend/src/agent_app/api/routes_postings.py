@@ -121,6 +121,22 @@ def patch_application(posting_id: str, update: ApplicationUpdate) -> Application
     return ApplicationState(**result)
 
 
+@router.delete("/applications/{posting_id:path}", response_model=ApplicationState)
+def delete_application(posting_id: str) -> ApplicationState:
+    """Put a posting back in the pool, with no status at all.
+
+    Not the same as any status: untriaged is the absence of an application row,
+    and it is what makes a posting eligible to be surfaced by a search again.
+    Deleting one that does not exist is a success, because the caller asked for
+    a state the posting is already in.
+    """
+    try:
+        result = tools.reset_status(posting_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return ApplicationState(**result)
+
+
 @router.patch("/applications", response_model=BulkStatusResult)
 def patch_applications(update: BulkStatusUpdate) -> BulkStatusResult:
     """Set one status on many postings.

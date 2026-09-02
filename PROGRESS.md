@@ -285,6 +285,35 @@ full strength.
    default. A status saved by an older build that no longer exists is dropped
    on load rather than sent to the API as a 422.
 
+9. **`found` no longer takes a posting out of circulation.** `find_postings`
+   filtered on `untriaged`, which is *no application row at all* — and it
+   writes a `found` row for everything it returns, so a result you scrolled
+   past was never offered again. Walking past a result is not a decision. A
+   second pseudo-status, `undecided` (no row, or `found`), is what it filters
+   on now; 149 postings and 677 chunks came back into circulation.
+
+10. **A posting can be cleared back to no status.** `DELETE
+    /api/applications/{id}` deletes the row rather than moving it to a
+    "cleared" status, because untriaged is the absence of a row and that is
+    what a search looks for. The `status_history` entry stays, with
+    `to_status = 'untriaged'`, so changing your mind is visible instead of
+    leaving a gap. Clearing something already clear is a success. The button
+    is in the detail panel next to the status keys.
+
+11. **Every stage has its own hue.** `interested` and `applied` were two
+    shades of the same grey, so the two halves of the pipeline — considering
+    something, and having sent it — looked identical. Now indigo and blue,
+    with `rejected` a muted red rather than the same grey as `interested`, and
+    lifted variants for a dark ground. This overrides `plan.md`'s "`interested`
+    neutral, `applied` blue-grey" at the author's request; the ramp is still
+    muted and still does not compete with the signal accent.
+
+12. **The agent's words and its tool calls render in the order they happened.**
+    `reduceEvents` collected all text into one blob printed under the results,
+    so "let me check the postings" appeared *after* the postings. It now emits
+    an ordered list of blocks, one per contiguous run of text and one per tool
+    call.
+
 ### The email pipeline has now run end to end
 
 Verified 2026-09-02 against the real mailbox. A test rejection naming

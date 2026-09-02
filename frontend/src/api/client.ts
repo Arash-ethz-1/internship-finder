@@ -255,6 +255,18 @@ export function getStats(): Promise<Stats> {
   return request<Stats>("/api/stats");
 }
 
+/** Put a posting back in the pool with no status at all, so a later search
+ *  can surface it again. Not the same as any status: untriaged is the absence
+ *  of an application row. */
+export function clearStatus(id: string): Promise<ApplicationState> {
+  return request<ApplicationState>(
+    `/api/applications/${encodeURIComponent(id)}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
 export function setStatus(
   id: string,
   status: Status,
