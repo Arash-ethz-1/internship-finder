@@ -33,6 +33,7 @@
   --status-offer: #4c8c3f;
   --status-rejected: #6b7078;
   --status-declined: #6b7078;
+  --status-not-relevant: #9aa0a8;
   --status-faded-opacity: 0.45; /* rejected and declined */
 
   /* Semantic, light mode */
@@ -116,6 +117,7 @@
   --color-status-offer: var(--status-offer);
   --color-status-rejected: var(--status-rejected);
   --color-status-declined: var(--status-declined);
+  --color-status-not-relevant: var(--status-not-relevant);
 
   /* Nothing in this app is rounder than 4px. */
   --radius-xs: 2px;

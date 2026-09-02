@@ -718,3 +718,53 @@ def test_json_shape_of_a_stored_suggestion(conn: sqlite3.Connection, settings: S
         "created_at",
     }
     assert json.dumps(row)  # serialisable as-is
+
+
+# --- narrowing the queue ---------------------------------------------------
+
+
+def _suggestion(
+    conn: sqlite3.Connection,
+    message_id: str,
+    classification: str,
+    confidence: float,
+    status: str | None = "rejected",
+) -> None:
+    conn.execute(
+        "INSERT INTO email_matches (message_id, received_at, subject, sender, snippet, "
+        "classification, confidence, suggested_status, created_at) "
+        "VALUES (?, '2026-09-01T00:00:00Z', 's', 'a@b.c', '', ?, ?, ?, '2026-09-01T00:00:00Z')",
+        (message_id, classification, confidence, status),
+    )
+    conn.commit()
+
+
+def test_min_confidence_drops_the_unsure_ones(conn: sqlite3.Connection) -> None:
+    _suggestion(conn, "m1", "rejection", 0.95)
+    _suggestion(conn, "m2", "rejection", 0.40)
+
+    kept = list_suggestions(conn, min_confidence=0.7)
+    assert [row["message_id"] for row in kept] == ["m1"]
+    assert len(list_suggestions(conn)) == 2
+
+
+def test_a_null_confidence_never_passes_a_threshold(conn: sqlite3.Connection) -> None:
+    _suggestion(conn, "m1", "other", 0.9, status=None)
+    conn.execute("UPDATE email_matches SET confidence = NULL WHERE message_id = 'm1'")
+    conn.commit()
+
+    assert list_suggestions(conn, min_confidence=0.1) == []
+
+
+def test_classification_narrows_to_one_kind(conn: sqlite3.Connection) -> None:
+    _suggestion(conn, "m1", "rejection", 0.9)
+    _suggestion(conn, "m2", "interview", 0.9, status="interviewing")
+
+    kept = list_suggestions(conn, classification="rejection")
+    assert [row["message_id"] for row in kept] == ["m1"]
+
+
+def test_the_filters_default_to_showing_everything(conn: sqlite3.Connection) -> None:
+    """A queue that hides what the classifier read cannot be learned from."""
+    _suggestion(conn, "m1", "other", 0.05, status=None)
+    assert len(list_suggestions(conn)) == 1

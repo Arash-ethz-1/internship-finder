@@ -34,9 +34,25 @@ def get_inbox(
     conn: Conn,
     pending_only: bool = Query(default=True, description="hide accepted and dismissed"),
     actionable_only: bool = Query(default=False, description="hide 'other' classifications"),
+    classification: str | None = Query(
+        default=None, description="rejection | interview | offer | other"
+    ),
+    min_confidence: float = Query(
+        default=0.0, ge=0.0, le=1.0, description="drop suggestions the model was unsure about"
+    ),
 ) -> InboxPage:
-    """The suggestions waiting for review, most confident first."""
-    rows = list_suggestions(conn, pending_only=pending_only, actionable_only=actionable_only)
+    """The suggestions waiting for review, most confident first.
+
+    ``pending`` is the unfiltered count, so the dashboard can say how many rows
+    the filters are holding back rather than pretending they do not exist.
+    """
+    rows = list_suggestions(
+        conn,
+        pending_only=pending_only,
+        actionable_only=actionable_only,
+        classification=classification,
+        min_confidence=min_confidence,
+    )
     return InboxPage(
         items=[InboxSuggestion(**dict(row)) for row in rows],
         pending=pending_count(conn),

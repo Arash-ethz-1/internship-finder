@@ -41,11 +41,31 @@ function Confidence({ value }: { value: number | null }) {
   );
 }
 
-const CLASSIFICATION_LABEL: Record<string, string> = {
-  rejection: "rejection",
-  interview: "interview",
-  offer: "offer",
-  other: "not about an application",
+/**
+ * What the classifier decided, as a chip.
+ *
+ * Uniform faint uppercase mono made every row look like every other row, which
+ * is the opposite of what a review queue needs: the first thing you want to
+ * know is what kind of news this is. The colours are the status ramp's, so a
+ * rejection here and a rejected posting on /postings read the same.
+ */
+const CLASSIFICATION: Record<string, { label: string; chip: string }> = {
+  rejection: {
+    label: "rejection",
+    chip: "border-status-rejected/50 text-text-muted",
+  },
+  interview: {
+    label: "interview",
+    chip: "border-status-interviewing/55 bg-status-interviewing/12 text-status-interviewing",
+  },
+  offer: {
+    label: "offer",
+    chip: "border-status-offer/55 bg-status-offer/12 text-status-offer",
+  },
+  other: {
+    label: "not about an application",
+    chip: "border-hairline text-text-faint",
+  },
 };
 
 function Row({ item }: { item: InboxSuggestion }) {
@@ -72,25 +92,38 @@ function Row({ item }: { item: InboxSuggestion }) {
   const busy = accept.isPending || dismiss.isPending;
   const unmatched = !item.posting_id;
 
+  const kind = CLASSIFICATION[item.classification ?? ""] ?? {
+    label: item.classification ?? "unread",
+    chip: "border-hairline text-text-faint",
+  };
+
   return (
-    <article className="border-b border-hairline px-4 py-3">
-      <div className="flex items-baseline gap-3">
-        <span className="font-mono text-2xs uppercase tracking-wide text-text-faint">
-          {CLASSIFICATION_LABEL[item.classification ?? ""] ?? item.classification}
+    // A thicker rule and real vertical air: at py-3 with everything in 12px
+    // grey, one message ran into the next and the queue read as a wall.
+    <article className="border-b-2 border-hairline px-4 py-5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <span
+          className={`inline-flex items-center rounded-xs border px-1.5 py-0.5 font-mono text-2xs whitespace-nowrap ${kind.chip}`}
+        >
+          {kind.label}
         </span>
         <Confidence value={item.confidence} />
-        <span className="ml-auto font-mono text-2xs text-text-faint">
+        <span className="ml-auto font-mono text-2xs tabular-nums text-text-faint">
           {item.received_at?.slice(0, 10) ?? "—"}
         </span>
       </div>
 
-      <div className="mt-1.5 text-xs font-medium">{item.subject || "(no subject)"}</div>
-      <div className="mt-0.5 font-mono text-2xs text-text-faint">{item.sender}</div>
+      {/* The subject is how you recognise a message, so it is the one thing
+          here at reading size rather than at data size. */}
+      <div className="mt-2 text-sm font-medium">{item.subject || "(no subject)"}</div>
+      <div className="mt-0.5 font-mono text-2xs text-text-muted">{item.sender}</div>
       {item.snippet && (
-        <p className="mt-1.5 max-w-prose text-2xs text-text-muted">{item.snippet}</p>
+        <p className="mt-2 max-w-prose border-l border-hairline pl-3 text-xs leading-relaxed text-text-muted">
+          {item.snippet}
+        </p>
       )}
 
-      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
         {item.posting_id ? (
           <span className="flex items-baseline gap-2 text-xs">
             <span className="font-mono text-2xs text-text-faint">{item.posting_id}</span>
@@ -118,8 +151,11 @@ function Row({ item }: { item: InboxSuggestion }) {
         )}
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-2 text-2xs text-text-faint">
+      {/* The decision, on its own ground. Separating what the mail said from
+          what you are about to do to the application is most of what makes a
+          row scannable. */}
+      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xs bg-surface-sunken px-3 py-2">
+        <label className="flex items-center gap-2 text-2xs text-text-muted">
           set to
           <select
             value={status}
@@ -162,14 +198,94 @@ function Row({ item }: { item: InboxSuggestion }) {
   );
 }
 
+/** What the queue can be narrowed to. `min` is the classifier's confidence. */
+const KINDS = [
+  { value: "", label: "everything" },
+  { value: "rejection", label: "rejections" },
+  { value: "interview", label: "interviews" },
+  { value: "offer", label: "offers" },
+  { value: "other", label: "other" },
+] as const;
+
+const CONFIDENCES = [
+  { value: 0, label: "any" },
+  { value: 0.5, label: "50%+" },
+  { value: 0.7, label: "70%+" },
+  { value: 0.9, label: "90%+" },
+] as const;
+
 export function Inbox() {
+  const [kind, setKind] = useState("");
+  const [minConfidence, setMinConfidence] = useState(0);
+
   const { data, isPending, error } = useQuery({
-    queryKey: ["inbox"],
-    queryFn: () => getInbox(true),
+    queryKey: ["inbox", kind, minConfidence],
+    queryFn: () => getInbox({ classification: kind, minConfidence }),
   });
+
+  const filters = (
+    <div className="flex flex-wrap items-center gap-2 font-mono text-2xs text-text-faint">
+      <label className="flex items-center gap-1.5">
+        show
+        <select
+          value={kind}
+          onChange={(e) => setKind(e.target.value)}
+          className="rounded-xs border border-hairline bg-transparent px-2 py-0.5 font-mono text-2xs text-text"
+        >
+          {KINDS.map((k) => (
+            <option key={k.value} value={k.value}>
+              {k.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex items-center gap-1.5">
+        confidence
+        <select
+          value={minConfidence}
+          onChange={(e) => setMinConfidence(Number(e.target.value))}
+          className="rounded-xs border border-hairline bg-transparent px-2 py-0.5 font-mono text-2xs text-text"
+        >
+          {CONFIDENCES.map((c) => (
+            <option key={c.value} value={c.value}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
 
   if (isPending) return <LoadingState what="the review queue" />;
   if (error) return <ErrorState error={error} />;
+
+  // `pending` is the unfiltered count, so this is what the filters are hiding
+  // rather than what does not exist.
+  const hidden = Math.max(0, data.pending - data.items.length);
+  const narrowed = kind !== "" || minConfidence > 0;
+
+  if (data.items.length === 0 && narrowed) {
+    return (
+      <div className="mx-auto h-full w-full max-w-4xl overflow-y-auto px-4 pt-6">
+        <h1 className="text-lg font-medium">Inbox</h1>
+        <div className="mt-3">{filters}</div>
+        <p className="mt-6 max-w-prose text-xs text-text-muted">
+          Nothing matches this filter. {data.pending} suggestion
+          {data.pending === 1 ? " is" : "s are"} waiting behind it.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            setKind("");
+            setMinConfidence(0);
+          }}
+          className="mt-3 rounded-xs border border-hairline px-2 py-1 font-mono text-2xs text-text-muted hover:border-signal hover:text-signal"
+        >
+          show everything
+        </button>
+      </div>
+    );
+  }
 
   if (data.items.length === 0) {
     return (
@@ -196,10 +312,19 @@ export function Inbox() {
           {data.pending} waiting
         </span>
       </div>
-      <p className="max-w-prose px-4 pt-1 pb-4 text-xs text-text-muted">
+      <p className="max-w-prose px-4 pt-1 text-xs text-text-muted">
         Read-only from Gmail. Nothing below has been applied — accepting one is what
         moves the application, and records which email caused it.
       </p>
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 pt-3 pb-4">
+        {filters}
+        {hidden > 0 && (
+          <span className="font-mono text-2xs text-text-faint">
+            {hidden} hidden by this filter
+          </span>
+        )}
+      </div>
 
       <div className="border-t border-hairline">
         {actionable.map((item) => (

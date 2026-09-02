@@ -209,6 +209,65 @@ refused.
 
 ---
 
+## Session 5 continued: four things found by using it
+
+1. **`not_relevant` is a new status.** "not for me" in the chat result list
+   wrote `rejected`, which in this schema means *a company turned you down*.
+   Thirty postings had gone `found -> rejected` without an application ever
+   being sent, so the pipeline read as thirty rejections and — worse — those
+   postings were candidates for the email matcher to attach a real rejection
+   letter to. `not_relevant` is excluded from `TRACKED_STATUSES` for exactly
+   that reason. The thirty rows were migrated with a `status_history` entry
+   recording the correction, so the change is traceable rather than silent.
+   `applications.status` has no CHECK constraint, so this was not a migration.
+
+2. **The chat survives navigation.** The transcript lived in `useState` inside
+   a route, so opening a posting the agent had just found threw the
+   conversation away. It now lives in `state/chatSession.ts`, outside React's
+   tree, and so does the agent loop — a turn started before you navigate keeps
+   streaming and is simply there when you come back. Not persisted to disk:
+   this survives navigation, not a reload. A "new conversation" control had to
+   come with it, since the empty state was otherwise unreachable.
+
+3. **The agent's answer is rendered as markdown.** It was arriving as
+   `**bold**` and `1.` in a `whitespace-pre-wrap` paragraph. `react-markdown`,
+   with every element mapped to this app's own classes.
+
+4. **The inbox can be narrowed and is legible.** `GET /api/inbox` takes
+   `classification` and `min_confidence`; the page has both as controls and
+   says how many rows they are hiding, because `pending` is the unfiltered
+   count. Defaults stay permissive on purpose — a queue that silently hides
+   what the classifier read is one you cannot learn to trust. The rows
+   themselves were 12px grey throughout with a hairline between them; the
+   subject is now at reading size, the classification is a chip in the status
+   ramp's colours, and the accept/dismiss controls sit on their own ground.
+
+**Status labels are readable now.** `rejected` and `declined` rendered the
+whole chip at 45% opacity, so the one thing you wanted to check at a glance was
+the hardest thing on the page to read. The dot still recedes — that is
+`plan.md`'s across-the-room signal — but the text sits on a tinted ground at
+full strength.
+
+### Retrieval, after using it in anger
+
+Two complaints, two different answers:
+
+- **"ML research internships in Zurich" returned quant and robotics roles.**
+  Not a ranking failure: those seven *were* every intern-labelled Zurich
+  posting in the database. 199 Zurich postings from 15 companies is the
+  ceiling, and the ML-research employers in Zurich — Google, Meta, Apple,
+  Microsoft, IBM Research, Disney Research, the ETH chairs — use none of the
+  three ATSes, so `plan.md`'s no-scraping rule puts them permanently out of
+  reach. `discover --from llm` aimed at Swiss companies is the only lever.
+- **"AI internships in Europe" was a real failure.** "AI" is a filler word in
+  2026 postings — "we are an AI-friendly company", "AI-first development" —
+  so it matches boilerplate everywhere. Measured directly: the query
+  `machine learning research internship` returns IMC Amsterdam, Perplexity
+  London, Cohere and Point72 at ranks 1-8; `AI internship` returns none of
+  them. Also, "Europe" cannot be expressed: `SearchFilters.location` is a
+  substring match, so the agent silently dropped it. That is the tool
+  descriptions' problem, and they are Category B.
+
 ## Amendments to plan.md
 
 Decided in conversation on 2026-08-30. These override `plan.md` where they

@@ -47,7 +47,7 @@ export function Stats() {
           return (
             <div
               key={status}
-              className={`${style.dot} ${style.faded ? "opacity-45" : ""}`}
+              className={`${style.dot} ${style.dim ? "opacity-45" : ""}`}
               style={{ width: `${(count / total) * 100}%` }}
               title={`${STATUS_LABELS[status]}: ${count}`}
             />
@@ -59,7 +59,7 @@ export function Stats() {
           <span key={status} className="flex items-center gap-1.5 font-mono text-2xs">
             <span
               className={`inline-block size-2 rounded-full ${statusStyle(status).dot} ${
-                statusStyle(status).faded ? "opacity-45" : ""
+                statusStyle(status).dim ? "opacity-45" : ""
               }`}
             />
             <span className="text-text-muted">{STATUS_LABELS[status]}</span>

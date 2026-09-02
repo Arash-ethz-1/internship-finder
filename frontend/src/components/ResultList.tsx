@@ -17,12 +17,18 @@ import { StatusDot } from "./status";
  */
 
 /** What the bulk bar offers, in pipeline order. `found` is not here: it is
- *  where a posting starts, not somewhere you move one to. */
+ *  where a posting starts, not somewhere you move one to.
+ *
+ *  "not for me" writes `not_relevant`, not `rejected`. It used to write
+ *  `rejected`, which says a company turned you down — so triaging a search
+ *  result made the pipeline read as rejections you never received, and put
+ *  the posting in front of the email matcher as something a rejection letter
+ *  could be about. */
 const ACTIONS: { status: Status; label: string }[] = [
   { status: "interested", label: "keep" },
   { status: "ready_to_submit", label: "ready to apply" },
   { status: "applied", label: "applied" },
-  { status: "rejected", label: "not for me" },
+  { status: "not_relevant", label: "not for me" },
 ];
 
 export function ResultList({ postings }: { postings: FoundPosting[] }) {

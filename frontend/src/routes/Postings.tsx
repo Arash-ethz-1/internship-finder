@@ -235,7 +235,7 @@ function Row({
   style: React.CSSProperties;
   onSelect: () => void;
 }) {
-  const faded = statusStyle(row.status).faded;
+  const faded = statusStyle(row.status).dim;
   // Hover is offered only on rows that are neither selected nor open: a
   // pointer highlight that overrode the selection would hide where you are.
   const background = selected

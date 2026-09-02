@@ -43,7 +43,7 @@ function Nav() {
   // suggestions that actually propose a status change.
   const { data: inbox } = useQuery({
     queryKey: ["inbox"],
-    queryFn: () => getInbox(true),
+    queryFn: () => getInbox(),
     staleTime: 60_000,
   });
   const link = ({ isActive }: { isActive: boolean }) =>

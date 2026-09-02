@@ -45,6 +45,7 @@ def now_iso() -> str:
 # provenance, not a decision -- the person has not judged the posting yet.
 STATUSES: tuple[str, ...] = (
     "found",
+    "not_relevant",
     "interested",
     "ready_to_submit",
     "applied",
@@ -54,12 +55,19 @@ STATUSES: tuple[str, ...] = (
     "declined",
 )
 
-# The statuses that mean the person actually did something about a posting.
-# `found` is excluded on purpose, and the exclusion is load-bearing: the email
-# matcher resolves a message against this set, so a posting that a search
-# merely surfaced must never be a candidate for "your application was
-# rejected". Anything that means "my pipeline" filters on this, not STATUSES.
-TRACKED_STATUSES: tuple[str, ...] = tuple(s for s in STATUSES if s != "found")
+# `not_relevant` is you passing on a posting; `rejected` is a company passing
+# on you. Conflating them was a real bug: triaging a search result as "not for
+# me" wrote `rejected`, which made the pipeline read as forty rejections you
+# never received, and — worse — made those postings candidates for matching a
+# real rejection email.
+
+# The statuses that mean the person has an application a company could answer.
+# `found` and `not_relevant` are excluded on purpose, and the exclusion is
+# load-bearing: the email matcher resolves a message against this set, so a
+# posting a search merely surfaced, or one you dismissed without applying to,
+# must never be a candidate for "your application was rejected". Anything that
+# means "my pipeline" filters on this, not STATUSES.
+TRACKED_STATUSES: tuple[str, ...] = tuple(s for s in STATUSES if s not in ("found", "not_relevant"))
 
 SOURCES: tuple[str, ...] = ("greenhouse", "lever", "ashby")
 

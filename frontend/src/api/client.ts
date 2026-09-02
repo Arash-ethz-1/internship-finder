@@ -43,6 +43,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const STATUSES = [
   "found",
+  "not_relevant",
   "interested",
   "ready_to_submit",
   "applied",
@@ -271,8 +272,21 @@ export function draftLetter(id: string): Promise<LetterResponse> {
   return request<LetterResponse>(`/api/letters/${encodeURIComponent(id)}`, { method: "POST" });
 }
 
-export function getInbox(pendingOnly = true): Promise<InboxPage> {
-  return request<InboxPage>(`/api/inbox${toQueryString({ pending_only: pendingOnly })}`);
+export interface InboxFilters {
+  pendingOnly?: boolean;
+  /** rejection | interview | offer | other */
+  classification?: string;
+  /** 0 to 1. Drops suggestions the classifier was unsure about. */
+  minConfidence?: number;
+}
+
+export function getInbox(filters: InboxFilters = {}): Promise<InboxPage> {
+  const query = toQueryString({
+    pending_only: filters.pendingOnly ?? true,
+    classification: filters.classification || undefined,
+    min_confidence: filters.minConfidence || undefined,
+  });
+  return request<InboxPage>(`/api/inbox${query}`);
 }
 
 /**

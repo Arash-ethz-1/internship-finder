@@ -14,6 +14,7 @@ from ..db import LEVELS, SOURCES, STATUSES
 
 StatusLiteral = Literal[
     "found",
+    "not_relevant",
     "interested",
     "ready_to_submit",
     "applied",

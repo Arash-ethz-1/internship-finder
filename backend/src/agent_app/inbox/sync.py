@@ -24,6 +24,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from ..config import Settings
 from ..db import STATUSES, TRACKED_STATUSES, now_iso
@@ -229,18 +230,32 @@ def list_suggestions(
     *,
     pending_only: bool = True,
     actionable_only: bool = False,
+    classification: str | None = None,
+    min_confidence: float = 0.0,
 ) -> list[sqlite3.Row]:
     """The review queue, most confident first.
 
     ``actionable_only`` drops the ``other`` classifications, which carry no
-    suggested status. They are kept by default because seeing what was read
-    and dismissed is how you learn to trust the classifier.
+    suggested status. ``classification`` narrows to one kind of message, and
+    ``min_confidence`` drops the ones the model was unsure about.
+
+    All three default to off. A queue that silently hides what the classifier
+    read is a queue you cannot learn to trust, so the narrowing is a choice the
+    caller makes and the dashboard shows how many rows it is holding back.
     """
     where = []
+    params: list[Any] = []
     if pending_only:
         where.append("e.applied = 0 AND e.dismissed = 0")
     if actionable_only:
         where.append("e.suggested_status IS NOT NULL")
+    if classification:
+        where.append("e.classification = ?")
+        params.append(classification)
+    if min_confidence > 0:
+        # Confidence is nullable; an unclassified row has nothing to compare.
+        where.append("coalesce(e.confidence, 0) >= ?")
+        params.append(min_confidence)
     clause = (" WHERE " + " AND ".join(where)) if where else ""
 
     return conn.execute(
@@ -249,7 +264,8 @@ def list_suggestions(
         "LEFT JOIN postings p ON p.id = e.posting_id "
         "LEFT JOIN applications a ON a.posting_id = e.posting_id"
         f"{clause} "
-        "ORDER BY e.suggested_status IS NULL, e.confidence DESC, e.received_at DESC"
+        "ORDER BY e.suggested_status IS NULL, e.confidence DESC, e.received_at DESC",
+        params,
     ).fetchall()
 
 

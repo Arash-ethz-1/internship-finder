@@ -50,21 +50,25 @@ def test_the_plans_status_set_is_still_all_there() -> None:
     assert PLAN_STATUSES <= set(STATUSES)
 
 
-def test_found_is_the_only_addition_to_the_plan() -> None:
-    """`found` was added 2026-09-01 and is the one documented deviation.
+def test_the_additions_to_the_plan_are_the_documented_two() -> None:
+    """`found` (2026-09-01) and `not_relevant` (2026-09-02).
 
-    Kept as its own test so a second undocumented status is still caught.
+    `not_relevant` exists because "not for me" was writing `rejected`, which
+    says a company turned you down. Kept as its own test so a third
+    undocumented status is still caught.
     """
-    assert set(STATUSES) - PLAN_STATUSES == {"found"}
+    assert set(STATUSES) - PLAN_STATUSES == {"found", "not_relevant"}
 
 
-def test_found_is_not_a_tracked_status() -> None:
+def test_untouched_postings_are_not_tracked_statuses() -> None:
     """The exclusion the email matcher depends on.
 
-    A posting a search merely surfaced must never be a candidate for "your
-    application was rejected", because no application was ever sent.
+    A posting a search merely surfaced, or one you passed on without ever
+    applying, must never be a candidate for "your application was rejected",
+    because no application was ever sent.
     """
     assert "found" not in TRACKED_STATUSES
+    assert "not_relevant" not in TRACKED_STATUSES
     assert set(TRACKED_STATUSES) == PLAN_STATUSES
 
 
