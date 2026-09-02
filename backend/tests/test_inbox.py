@@ -768,3 +768,18 @@ def test_the_filters_default_to_showing_everything(conn: sqlite3.Connection) -> 
     """A queue that hides what the classifier read cannot be learned from."""
     _suggestion(conn, "m1", "other", 0.05, status=None)
     assert len(list_suggestions(conn)) == 1
+
+
+# --- reading your own sent mail --------------------------------------------
+
+
+def test_sent_mail_is_excluded_by_default() -> None:
+    """Your own application to a company must not read as its answer."""
+    assert "-from:me" in build_query("2026-09-01T00:00:00Z")
+
+
+def test_include_sent_lifts_only_that_exclusion() -> None:
+    query = build_query("2026-09-01T00:00:00Z", include_sent=True)
+    assert "-from:me" not in query
+    assert "-category:promotions" in query
+    assert "after:2026/08/29" in query

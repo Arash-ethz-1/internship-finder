@@ -37,7 +37,13 @@ log = logging.getLogger(__name__)
 # Gmail search terms shared by every sync. Chats are not email, and promotions
 # and social are where newsletters live — a rejection never lands there, and
 # excluding them keeps the classifier's bill down.
-QUERY_EXCLUSIONS = "-in:chats -category:promotions -category:social -from:me"
+QUERY_EXCLUSIONS = "-in:chats -category:promotions -category:social"
+
+# Mail you sent is excluded because your own application to a company would
+# otherwise be classified as that company's answer to it. The exclusion is
+# lifted only by `--include-sent`, which exists so the pipeline can be
+# exercised end to end without a second mailbox.
+SENT_EXCLUSION = "-from:me"
 
 # Look back a little further than the earliest application, because a reply
 # can arrive before the status is recorded by hand.
@@ -100,14 +106,23 @@ def earliest_application(conn: sqlite3.Connection) -> str | None:
     return row["earliest"] if row and row["earliest"] else None
 
 
-def build_query(since: str, *, lookback_days: int = LOOKBACK_DAYS) -> str:
+def build_query(
+    since: str,
+    *,
+    lookback_days: int = LOOKBACK_DAYS,
+    include_sent: bool = False,
+) -> str:
     """Build the Gmail search query for everything since a UTC ISO-8601 stamp."""
     try:
         moment = datetime.strptime(since[:10], "%Y-%m-%d").replace(tzinfo=UTC)
     except ValueError:
         moment = datetime.now(UTC) - timedelta(days=30)
     moment -= timedelta(days=lookback_days)
-    return f"after:{moment.strftime('%Y/%m/%d')} {QUERY_EXCLUSIONS}"
+
+    parts = [f"after:{moment.strftime('%Y/%m/%d')}", QUERY_EXCLUSIONS]
+    if not include_sent:
+        parts.append(SENT_EXCLUSION)
+    return " ".join(parts)
 
 
 def known_message_ids(conn: sqlite3.Connection) -> set[str]:
@@ -122,6 +137,7 @@ def sync_email(
     *,
     limit: int = DEFAULT_LIMIT,
     classify_fn: object = None,
+    include_sent: bool = False,
 ) -> SyncReport:
     """Fetch candidate emails, match and classify them, and store suggestions.
 
@@ -144,7 +160,7 @@ def sync_email(
     seen = known_message_ids(conn)
     classifier = classify_fn if classify_fn is not None else classify
 
-    message_ids = client.search(build_query(since), limit=limit)
+    message_ids = client.search(build_query(since, include_sent=include_sent), limit=limit)
     report.found = len(message_ids)
 
     for message_id in message_ids:

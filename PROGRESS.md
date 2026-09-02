@@ -303,9 +303,23 @@ Two things the test surfaced:
   the ATS/consumer list and is discarded, so signal 1 never fired. A real
   Databricks rejection would match on the domain instead.
 
-First real confidence reading: 0.97 on an unambiguous rejection. One sample
-says nothing about whether the scores spread out, which is still the thing to
-watch.
+`cli sync-email --include-sent` was added afterwards so this is repeatable
+without a second mailbox. It lifts `-from:me` and nothing else; the default is
+unchanged, because your own application to a company must never be read as
+that company's answer to it.
+
+Three test messages have now gone through, all matched, all classified
+correctly:
+
+| | | |
+|---|---|---|
+| ANYbotics, interview invitation | `interview` | **0.98** -> `interviewing` |
+| Databricks, rejection | `rejection` | **0.96** -> `rejected` |
+| Notion, rejection | `rejection` | **0.82** -> `rejected` |
+
+The confidences do spread — 0.82 to 0.98 — rather than piling up at one value,
+which was the open question. Three samples on unambiguous text is still not
+evidence about the hard cases. `applications` was untouched by all three.
 
 ### Retrieval, after using it in anger
 

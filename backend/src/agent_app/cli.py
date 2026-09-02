@@ -424,7 +424,9 @@ def cmd_sync_email(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        report = sync_email(conn, settings, client, limit=args.limit)
+        report = sync_email(
+            conn, settings, client, limit=args.limit, include_sent=args.include_sent
+        )
     except GmailError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -679,6 +681,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--login-only",
         action="store_true",
         help="with --login, stop after authorising instead of syncing",
+    )
+    p_sync.add_argument(
+        "--include-sent",
+        action="store_true",
+        help=(
+            "also read mail you sent yourself. Off by default because your own "
+            "application to a company would be read as that company's answer; "
+            "on, it lets you test the pipeline without a second mailbox."
+        ),
     )
     p_sync.add_argument(
         "--limit",
