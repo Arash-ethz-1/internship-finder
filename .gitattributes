@@ -1,0 +1,10 @@
+# Narrow on purpose. A blanket `* text=auto` would renormalise every file in
+# the repository and show up as "everything changed"; this only covers the
+# files where the line ending is a functional requirement rather than a
+# preference.
+#
+# sbatch refuses a job script containing CRLF outright:
+#   sbatch: error: Batch script contains DOS line breaks (\r\n)
+# and this repository is developed on Windows, where a checkout would
+# otherwise produce exactly that.
+*.sh text eol=lf
