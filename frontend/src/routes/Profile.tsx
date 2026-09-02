@@ -5,6 +5,7 @@ import {
   ApiError,
   getProfile,
   getProfileDoc,
+  deleteProfileDoc,
   saveProfileDoc,
   type ProfileSummary,
 } from "../api/client";
@@ -35,6 +36,11 @@ export function Profile() {
   // Switching documents and switching back therefore keeps your edit.
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  // Which write-up the delete button is armed for. One click arms, the second
+  // deletes; blurring disarms.
+  const [confirming, setConfirming] = useState<string | null>(null);
 
   const list = useQuery({ queryKey: ["profile"], queryFn: getProfile });
 
@@ -71,6 +77,21 @@ export function Profile() {
       saveProfileDoc(newSlug, `# ${newSlug.replace(/-/g, " ")}\n\n`),
     onSuccess: () =>
       void queryClient.invalidateQueries({ queryKey: ["profile"] }),
+  });
+
+  const remove = useMutation({
+    mutationFn: (target: string) => deleteProfileDoc(target),
+    onSuccess: (_void, target) => {
+      // Drop any unsaved edit with it, and fall back to whichever write-up the
+      // list picks next rather than pointing at a file that is gone.
+      setEdits((current) => {
+        const rest = { ...current };
+        delete rest[target];
+        return rest;
+      });
+      setChosen(null);
+      void queryClient.invalidateQueries({ queryKey: ["profile"] });
+    },
   });
 
   const save = useMutation({
@@ -120,38 +141,55 @@ export function Profile() {
             </p>
           )}
 
-          {/* Creating and saving are the same request: PUT to a slug that does
-              not exist writes the file. So this only has to invent the name
-              and a heading to start from. */}
-          <button
-            type="button"
-            onClick={() => {
-              const name = window.prompt(
-                "Name for the new write-up (lowercase, hyphens):",
-                "",
-              );
-              if (name === null) return;
-              const newSlug = name
-                .trim()
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, "-")
-                .replace(/^-+|-+$/g, "");
-              if (!newSlug) return;
-              if (documents.some((d) => d.slug === newSlug)) {
-                setChosen(newSlug);
-                return;
-              }
-              setChosen(newSlug);
-              setEdits((current) => ({
-                ...current,
-                [newSlug]: `# ${name.trim()}\n\n`,
-              }));
-              create.mutate(newSlug);
-            }}
-            className="w-full border-b border-hairline px-3 py-2 text-left text-xs text-text-muted hover:bg-surface-sunken hover:text-signal"
-          >
-            + add a write-up
-          </button>
+          {/* Creating and saving are the same request: PUT to a slug that has
+              no file yet writes it. The name is typed in the page rather than
+              in a `window.prompt`, which is a browser chrome dialog this app
+              has no control over and which looks nothing like the rest of it. */}
+          {adding ? (
+            <form
+              className="border-b border-hairline px-3 py-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const slugified = slugify(newName);
+                if (!slugified) return;
+                setAdding(false);
+                setNewName("");
+                setChosen(slugified);
+                if (!documents.some((d) => d.slug === slugified)) {
+                  create.mutate(slugified);
+                }
+              }}
+            >
+              <input
+                autoFocus
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onBlur={() => !newName.trim() && setAdding(false)}
+                onKeyDown={(e) => e.key === "Escape" && setAdding(false)}
+                placeholder="e.g. maze solver"
+                aria-label="Name for the new write-up"
+                className="w-full border border-hairline bg-transparent px-2 py-1 text-xs rounded-xs placeholder:text-text-faint"
+              />
+              <div className="mt-1 flex items-center justify-between font-mono text-2xs text-text-faint">
+                <span>{slugify(newName) || "…"}.md</span>
+                <button
+                  type="submit"
+                  disabled={!slugify(newName) || create.isPending}
+                  className="text-signal disabled:opacity-40"
+                >
+                  create
+                </button>
+              </div>
+            </form>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setAdding(true)}
+              className="w-full border-b border-hairline px-3 py-2 text-left text-xs text-text-muted hover:bg-surface-sunken hover:text-signal"
+            >
+              + add a write-up
+            </button>
+          )}
         </div>
 
         {list.data && list.data.pending_embedding > 0 && (
@@ -197,6 +235,30 @@ export function Profile() {
                       ? "saved"
                       : "save"}
                 </button>
+                {/* Two clicks, not a modal: a write-up is a file you wrote and
+                    losing it to a stray click would be worse than the extra
+                    step, but a confirm dialog for one file is heavy. */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirming === slug) remove.mutate(slug);
+                    else setConfirming(slug);
+                  }}
+                  onBlur={() => setConfirming(null)}
+                  disabled={remove.isPending}
+                  className={`border px-2 py-1 font-mono text-2xs rounded-xs disabled:opacity-40 ${
+                    confirming === slug
+                      ? "border-status-rejected bg-status-rejected/12 text-status-rejected"
+                      : "border-hairline text-text-faint hover:text-status-rejected"
+                  }`}
+                  title="Delete this write-up and the chunks built from it"
+                >
+                  {remove.isPending
+                    ? "deleting…"
+                    : confirming === slug
+                      ? "really delete?"
+                      : "delete"}
+                </button>
               </div>
             </div>
 
@@ -236,6 +298,17 @@ export function Profile() {
       </main>
     </div>
   );
+}
+
+/** A filename from a human-typed name. Shown live under the input so the file
+ *  it will create is never a surprise. */
+function slugify(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
 }
 
 function DocRow({

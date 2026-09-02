@@ -79,12 +79,17 @@ export function NewPostingDialog({
        off the bottom of a laptop screen. The fields scroll; the header and the
        footer stay put, so the way out of the dialog is always reachable. */
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-ink/40 p-6"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-6"
       onClick={onClose}
       role="presentation"
     >
       <div
-        className="flex max-h-full w-[34rem] max-w-[92vw] flex-col border border-hairline bg-surface rounded-xs shadow-lg"
+        // `max-h-full` resolves against the parent's *padded* box, so the
+        // dialog could still be a full viewport tall inside a padded overlay
+        // and hang off the bottom. Subtracting the padding explicitly is what
+        // actually bounds it. `dvh` rather than `vh` so a mobile URL bar
+        // shrinking the viewport does not push the footer out of reach.
+        className="flex max-h-[calc(100dvh-3rem)] w-[34rem] max-w-[92vw] flex-col border border-hairline bg-surface rounded-xs shadow-lg"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
