@@ -44,7 +44,7 @@ Write for a reader who has never seen the project and will only ever read one
 section of it.
 
 - **What it does**, in one or two sentences, without jargon
-- **What you built**, specifically. Not "worked on the backend" — which parts,
+- **What you built**, specifically. Not "worked on the backend": which parts,
   which decisions were yours, what you would do differently
 - **The technical detail** an interviewer would follow up on: the algorithm,
   the data structure, the thing that was hard

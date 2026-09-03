@@ -15,7 +15,7 @@ uv run python check.py 1 -v       # ...with the full failure output
 These tests live outside the main suite on purpose, so `uv run pytest` and CI
 stay green while you work.
 
-Passing every test does **not** mean your answer is good — only that it is not
+Passing every test does **not** mean your answer is good, only that it is not
 broken. Chunking especially has no test that can judge it; that is what
 `try_chunking.py` and later `cli eval` are for.
 
@@ -43,15 +43,15 @@ separated by `\n\n`, bullets prefixed with `- `), and optionally `.title` and
 - `len(chunk.text) <= max_chars` for every chunk
 - calling it twice on the same posting gives the same result
 
-**Example** — body of 3 paragraphs (900, 200, 150 chars), `max_chars=1200`:
-a reasonable answer is 2 chunks — `[900]` then `[200 + 150]` — because packing
+**Example:** body of 3 paragraphs (900, 200, 150 chars), `max_chars=1200`:
+a reasonable answer is 2 chunks, `[900]` then `[200 + 150]`, because packing
 the two small ones together beats emitting them as separate fragments.
 
 **Yours to decide:** whether to prepend title/company to each chunk, whether
 chunks overlap, whether to drop company boilerplate, and the smallest chunk
 worth keeping.
 
-**Hint if stuck:** get *anything* working first — slice the body into
+**Hint if stuck:** get *anything* working first: slice the body into
 fixed-size pieces, run `try_chunking.py`, then improve. Do not design it in
 your head.
 
@@ -88,7 +88,7 @@ def dense_scores(query_vec: np.ndarray, matrix: np.ndarray) -> np.ndarray
 **Output.** Shape `(n,)`. Higher means more similar.
 
 Cosine similarity is the dot product divided by the product of the two
-magnitudes — the cosine of the angle between them. It ignores length and
+magnitudes: the cosine of the angle between them. It ignores length and
 measures direction only, which is what you want: a long document and a short
 query about the same thing should score high.
 
@@ -113,7 +113,7 @@ few lines. Start here if you want a win before tackling chunking.
 
 **File:** `core/retrieval.py`
 
-Keyword scoring. Where dense search compares meaning, this counts words — and
+Keyword scoring. Where dense search compares meaning, this counts words, and
 is the half that reliably finds an exact term like "PyTorch".
 
 ```python
@@ -133,20 +133,20 @@ score(d) = Σ  IDF(t) · ( f(t,d) · (k1 + 1) ) / ( f(t,d) + k1 · (1 - b + b ·
 IDF(t) = ln( 1 + (N - n(t) + 0.5) / (n(t) + 0.5) )
 ```
 
-- `f(t,d)` — how many times `t` appears in `d`
-- `|d|` — length of `d` in tokens; `avgdl` — mean document length
-- `N` — number of documents; `n(t)` — how many contain `t`
+- `f(t,d)`: how many times `t` appears in `d`
+- `|d|`: length of `d` in tokens; `avgdl`: mean document length
+- `N`: number of documents; `n(t)`: how many contain `t`
 - `k1 ≈ 1.5` controls saturation (the 10th occurrence adds less than the 2nd)
 - `b ≈ 0.75` controls length normalisation (long documents get discounted)
 
 **Must hold**
 - a document containing a query term never scores below one containing none
 - a rarer term contributes more than a common one
-- term frequency saturates — 20 occurrences is not 10× better than 2
+- term frequency saturates, 20 occurrences is not 10× better than 2
 - an empty corpus, or a query matching nothing, returns zeros rather than
   crashing
 - no `nan` or `inf` anywhere, including when a term appears in *every*
-  document (the textbook IDF can go negative there — decide what to do)
+  document (the textbook IDF can go negative there, so decide what to do)
 
 ---
 
@@ -191,7 +191,7 @@ whether to return it here or recompute it in `search`.
 
 **File:** `core/retrieval.py`
 
-Glue. Mostly wiring — the pieces are all written.
+Glue. Mostly wiring: the pieces are all written.
 
 ```python
 def search(query: str, filters: SearchFilters, k: int = 10) -> list[SearchHit]
@@ -208,11 +208,11 @@ def search(query: str, filters: SearchFilters, k: int = 10) -> list[SearchHit]
 - at most `k` hits, sorted by score descending
 - `rank` is 1, 2, 3, … matching that order
 - `component_scores` has keys `"dense"` and `"bm25"`, and **the two values sum
-  to `score`** — the dashboard draws them as a stacked bar, which is only
+  to `score`**, because the dashboard draws them as a stacked bar, which is only
   honest if the parts add up
 - filters are respected (`load_candidates` does this for you)
 - an empty candidate set returns `[]`
-- candidates whose `vector_row` is `None` are not embedded yet — decide whether
+- candidates whose `vector_row` is `None` are not embedded yet, so decide whether
   to skip them or score them on BM25 alone
 
 ---
@@ -255,7 +255,7 @@ worked example of the call shape.
 
 ## 8. The four tool descriptions
 
-**File:** `core/tools.py` — every `"TODO: author writes this"`
+**File:** `core/tools.py`, every `"TODO: author writes this"`
 
 Not code. The model never sees your function signatures; these strings are the
 entire interface. A vague description produces an agent that searches when it
@@ -279,7 +279,7 @@ def recall_at_k(retrieved: list[str], relevant: list[str], k: int) -> float
 def run_eval(queries: list[EvalQuery], k_values=(1, 5, 10, 20)) -> EvalResult
 ```
 
-`recall_at_k` — what fraction of the relevant items appear in the top `k`
+`recall_at_k`: what fraction of the relevant items appear in the top `k`
 retrieved. Five lines.
 
 **Must hold**
@@ -287,7 +287,7 @@ retrieved. Five lines.
 - `k=1` → `0.5`
 - empty `relevant` → decide and be consistent (0.0 is defensible; a crash is
   not)
-- duplicates in `retrieved` — several chunks of one posting can match; decide
+- duplicates in `retrieved`: several chunks of one posting can match; decide
   whether that counts once
 - `k` larger than `len(retrieved)` is fine
 
@@ -302,6 +302,6 @@ object per line:
 {"query": "remote ML internships in Europe", "relevant_posting_ids": ["greenhouse:123", "lever:abc"]}
 ```
 
-Twenty to thirty of these. Finding the ids is the boring part — use the
+Twenty to thirty of these. Finding the ids is the boring part: use the
 dashboard, filter, and copy them. It is the only way to know whether your
 chunking decisions actually helped.

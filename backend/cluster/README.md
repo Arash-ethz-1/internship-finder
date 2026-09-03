@@ -41,7 +41,7 @@ match the configured one, and refuses one containing NaN.
 
 ## Setup, once
 
-On `tik42x` — this is installation, not computation, so the login node is fine:
+On `tik42x` (this is installation, not computation, so the login node is fine):
 
 ```bash
 ssh ETH_USERNAME@tik42x.ethz.ch
@@ -168,7 +168,7 @@ tempting to run carelessly:
   node's CPUs and memory, so it needs no calendar entry and no reservation.
   Those are only required past 4 GPUs, or half a node's cores or memory.
 - Access requires being listed on the DISCO thesis page and being inside the
-  ETH network — VPN, or the `j2tik.ethz.ch` jump host for plain ssh.
+  ETH network: VPN, or the `j2tik.ethz.ch` jump host for plain ssh.
 
 ## Choosing a different model
 
@@ -181,9 +181,9 @@ EMBEDDING_MODEL=intfloat/multilingual-e5-large
 EMBEDDING_DIM=1024
 ```
 
-Then delete `data/vectors.npy` and `data/vectors.meta.json` — the app refuses
-to mix two vector spaces rather than silently ranking nonsense — and export,
-run, import again.
+Then delete `data/vectors.npy` and `data/vectors.meta.json`, because the app
+refuses to mix two vector spaces rather than silently ranking nonsense, and
+export, run, import again.
 
 `multilingual-e5-large` is the strongest model `fastembed` publishes, and on a
 GPU it costs no more wall-clock than the small one. The bill lands on the
@@ -192,6 +192,6 @@ pays roughly a second rather than 130 ms. Worth measuring with `cli eval`
 before committing to it.
 
 Models that need an instruction prefix have it applied automatically. That
-table lives in two places — `MODEL_PREFIXES` here and `LOCAL_MODEL_PREFIXES`
-in `core/embeddings.py` — and they have to agree, or documents and queries end
+table lives in two places, `MODEL_PREFIXES` here and `LOCAL_MODEL_PREFIXES`
+in `core/embeddings.py`, and they have to agree, or documents and queries end
 up in different corners of the same space.
