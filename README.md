@@ -13,7 +13,7 @@ Everything runs locally. One SQLite file, one numpy array, one inverted index.
 
 https://github.com/user-attachments/assets/fa1f8559-f007-4473-85ae-d516d4965903
 
-[**Watch the walkthrough**](docs/demo.mp4) — 4 minutes: the corpus and its filters, the agent picking its own filters and re-searching when the results are wrong, the screen removing quant trading roles from a machine learning search, grounded letter drafting, and the inbox suggesting what happened to an application without acting on it.
+**The walkthrough**, 4 minutes: the corpus and its filters, the agent picking its own filters and re-searching when the results are wrong, the screen removing quant trading roles from a machine learning search, grounded letter drafting, and the inbox suggesting what happened to an application without acting on it.
 
 This is a learning project. [`plan.md`](plan.md) is the spec and takes precedence
 over this file; [`PROGRESS.md`](PROGRESS.md) is the engineering log and
