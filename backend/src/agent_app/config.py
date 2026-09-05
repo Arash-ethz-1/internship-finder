@@ -210,7 +210,7 @@ def load_settings() -> Settings:
         embedding_model=os.getenv("EMBEDDING_MODEL") or default_model,
         embedding_dim=int(os.getenv("EMBEDDING_DIM") or default_dim),
         api_host=os.getenv("API_HOST") or "127.0.0.1",
-        api_port=int(os.getenv("API_PORT") or 8000),
+        api_port=int(os.getenv("API_PORT") or 8010),
         cors_origins=origins,
         user_agent=os.getenv(
             "USER_AGENT",

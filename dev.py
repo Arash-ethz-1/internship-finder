@@ -38,6 +38,13 @@ NPM = "npm.cmd" if os.name == "nt" else "npm"
 # or not at all, and a stale server is invisible: the app answers normally and
 # quietly runs whatever the code was when you started it. That cost an
 # afternoon of "the screen is not running" when the screen was fine.
+# One number, read by the API and by the Vite proxy, overridable with
+# API_PORT. Not 8000: on at least one machine something holds that port that
+# Windows will not attribute to a live process, so uvicorn cannot bind, its
+# child dies, and the browser goes on talking to whatever answered there
+# first. That is indistinguishable from the backend ignoring your changes.
+API_PORT = os.environ.setdefault("API_PORT", "8010")
+
 API_CMD = [
     "uv",
     "run",
@@ -47,7 +54,7 @@ API_CMD = [
     "--reload-dir",
     "src",
     "--port",
-    "8000",
+    API_PORT,
 ]
 WEB_CMD = [NPM, "run", "dev"]
 
