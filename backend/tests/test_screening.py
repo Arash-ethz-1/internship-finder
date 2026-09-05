@@ -59,12 +59,22 @@ def fake_search_over(conn: sqlite3.Connection):
     """
 
     def search(query, filters, k=10):
-        assert filters.status == "undecided"
-        rows = conn.execute(
-            "SELECT c.id, c.posting_id, c.text FROM chunks c "
-            "LEFT JOIN applications a ON a.posting_id = c.posting_id "
-            "WHERE a.posting_id IS NULL OR a.status = 'found' ORDER BY c.id"
-        ).fetchall()
+        # Scoped one of the two ways the callers scope: `find_postings` by
+        # status, `list_shortlist` by the ids already in the pipeline.
+        assert filters.status == "undecided" or filters.posting_ids
+        if filters.posting_ids:
+            marks = ",".join("?" * len(filters.posting_ids))
+            rows = conn.execute(
+                f"SELECT id, posting_id, text FROM chunks WHERE posting_id IN ({marks}) "
+                "ORDER BY id",
+                filters.posting_ids,
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT c.id, c.posting_id, c.text FROM chunks c "
+                "LEFT JOIN applications a ON a.posting_id = c.posting_id "
+                "WHERE a.posting_id IS NULL OR a.status = 'found' ORDER BY c.id"
+            ).fetchall()
         return [
             retrieval.SearchHit(
                 chunk_id=r["id"],
@@ -317,3 +327,110 @@ def test_with_the_screen_off_the_list_is_what_it_always_was(
     assert all("screened_out" not in row for row in out)
     statuses = dict(conn.execute("SELECT posting_id, status FROM applications"))
     assert statuses == {"greenhouse:1": "found", "greenhouse:2": "found"}
+
+
+#
+# The same two steps over the person's own pipeline, rather than the corpus.
+
+
+def _decide(conn: sqlite3.Connection, posting_id: str, status: str) -> None:
+    conn.execute(
+        "INSERT INTO applications (posting_id, status, note, updated_at) VALUES (?, ?, '', ?)",
+        (posting_id, status, now_iso()),
+    )
+    conn.commit()
+
+
+def test_the_shortlist_is_untouched_without_a_query(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, with_key
+) -> None:
+    add_posting(conn, "greenhouse:1", "DeepMind", "Machine Learning Research Intern")
+    add_posting(conn, "greenhouse:2", "Jane Street", "Quantitative Research Intern")
+    _decide(conn, "greenhouse:1", "applied")
+    _decide(conn, "greenhouse:2", "applied")
+
+    def explode(settings, prompt, count):
+        raise AssertionError("no query means nothing to narrow, so no model call")
+
+    monkeypatch.setattr(screen, "call_model", explode)
+    out = tools.list_shortlist(status="applied")
+    assert {row["posting_id"] for row in out} == {"greenhouse:1", "greenhouse:2"}
+
+
+def test_a_query_narrows_the_pipeline_by_meaning(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, with_key
+) -> None:
+    add_posting(conn, "greenhouse:1", "DeepMind", "Machine Learning Research Intern")
+    add_posting(conn, "greenhouse:2", "Jane Street", "Quantitative Research Intern")
+    chunk_pending_postings(conn)
+    _decide(conn, "greenhouse:1", "applied")
+    _decide(conn, "greenhouse:2", "applied")
+    monkeypatch.setattr(retrieval, "search", fake_search_over(conn))
+    monkeypatch.setattr(
+        screen,
+        "call_model",
+        lambda settings, prompt, count: '{"drop": [{"n": 2, "why": "quant trading"}]}',
+    )
+
+    out = tools.list_shortlist(status="applied", query="machine learning research")
+
+    kept = [row for row in out if not row.get("screened_out")]
+    dropped = [row for row in out if row.get("screened_out")]
+    assert [row["posting_id"] for row in kept] == ["greenhouse:1"]
+    assert [row["posting_id"] for row in dropped] == ["greenhouse:2"]
+    # Narrowed or not, this is the pipeline view: the status and note that make
+    # it a pipeline row have to survive the narrowing.
+    assert kept[0]["status"] == "applied" and "note" in kept[0]
+
+
+def test_narrowing_the_pipeline_decides_nothing(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, with_key
+) -> None:
+    add_posting(conn, "greenhouse:1", "DeepMind", "Machine Learning Research Intern")
+    add_posting(conn, "greenhouse:2", "Jane Street", "Quantitative Research Intern")
+    chunk_pending_postings(conn)
+    _decide(conn, "greenhouse:1", "applied")
+    _decide(conn, "greenhouse:2", "applied")
+    monkeypatch.setattr(retrieval, "search", fake_search_over(conn))
+    monkeypatch.setattr(
+        screen,
+        "call_model",
+        lambda settings, prompt, count: '{"drop": [{"n": 2, "why": "quant trading"}]}',
+    )
+
+    tools.list_shortlist(status="applied", query="machine learning research")
+
+    # `find_postings` records what it shows. This must not: these postings were
+    # already decided about, and a `found` row here would overwrite a real
+    # decision with the fact that a list was looked at.
+    assert dict(conn.execute("SELECT posting_id, status FROM applications")) == {
+        "greenhouse:1": "applied",
+        "greenhouse:2": "applied",
+    }
+    assert conn.execute("SELECT COUNT(*) FROM status_history").fetchone()[0] == 0
+
+
+def test_a_posting_retrieval_never_saw_still_comes_back(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, with_key
+) -> None:
+    add_posting(conn, "greenhouse:1", "DeepMind", "Machine Learning Research Intern")
+    add_posting(conn, "greenhouse:2", "Cohere", "Research Intern")
+    chunk_pending_postings(conn)
+    _decide(conn, "greenhouse:1", "applied")
+    _decide(conn, "greenhouse:2", "applied")
+    # Retrieval knows about one of them: the other's chunks are not embedded
+    # yet, which on a fresh ingest is most of the corpus.
+    monkeypatch.setattr(retrieval, "search", lambda *a, **k: [])
+    seen: list[str] = []
+
+    def capture(settings, prompt, count):
+        seen.append(prompt)
+        return '{"drop": []}'
+
+    monkeypatch.setattr(screen, "call_model", capture)
+    out = tools.list_shortlist(status="applied", query="machine learning")
+
+    # Adding a query must not make a posting disappear from the person's own
+    # pipeline. Unranked is last, never absent.
+    assert {row["posting_id"] for row in out} == {"greenhouse:1", "greenhouse:2"}
+    assert "DeepMind" in seen[0] and "Cohere" in seen[0]

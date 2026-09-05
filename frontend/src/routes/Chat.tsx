@@ -2,7 +2,13 @@ import { useQuery } from "@tanstack/react-query";
 
 import { getStats } from "../api/client";
 import { Trace, reduceEvents } from "../components/Trace";
-import { reset, send, setInput, stop, useChatSession } from "../state/chatSession";
+import {
+  reset,
+  send,
+  setInput,
+  stop,
+  useChatSession,
+} from "../state/chatSession";
 
 /**
  * The agent, and the app's front door.
@@ -76,8 +82,9 @@ export function Chat() {
           <span className="font-mono tabular-nums">
             {(stats.data?.total ?? 0).toLocaleString()}
           </span>{" "}
-          postings and gives you a list you can keep, open, or draft a letter for. Anything you
-          have already triaged is left out, so the same posting is never offered twice.
+          postings and gives you a list you can keep, open, or draft a letter
+          for. Anything you have already triaged is left out, so the same
+          posting is never offered twice.
         </p>
 
         <div className="mt-6">{composer}</div>
@@ -120,9 +127,25 @@ export function Chat() {
         {turns.map((turn, index) => {
           const { blocks, error } = reduceEvents(turn.events);
           return (
-            <article key={index} className="mb-8">
-              <p className="font-mono text-2xs text-text-faint">you asked</p>
-              <p className="mt-0.5 text-sm">{turn.question}</p>
+            /* A turn is a question, a lot of results, and often several
+               hundred pixels of trace. Without a frame the next question
+               reads as more output from the last one, and the thing you
+               typed -- the only part of the page you wrote -- is the
+               easiest thing to lose. So: a numbered rule opens each turn,
+               and the question sits in a tinted block against the accent. */
+            <article key={index} className="mb-10 scroll-mt-4">
+              <div className="mb-3 flex items-center gap-3">
+                <span className="shrink-0 font-mono text-2xs text-text-faint">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <span className="h-px flex-1 bg-hairline" />
+              </div>
+
+              <div className="border-l-2 border-signal bg-surface-sunken py-2 pr-3 pl-3">
+                <p className="font-mono text-2xs text-signal">you asked</p>
+                <p className="mt-1 text-sm break-words">{turn.question}</p>
+              </div>
+
               <Trace
                 blocks={blocks}
                 error={error}

@@ -103,6 +103,33 @@ logs `stop_reason == "max_tokens"` by name. The lesson is not about tokens: a
 component whose failure mode is *doing nothing quietly* needs its failures to
 be loud, because nobody can see an absence.
 
+### Narrowing the pipeline, and a schema that lied
+
+Two follow-ups the author found by using it.
+
+* **`list_shortlist` and `past_decisions` take a `query`.** Both return
+  pipeline rows and neither could filter by anything but status, so "the ML
+  ones I applied to" was answered by handing the model every applied posting
+  and letting it read the titles. Fine at ten, and it quietly misses "Applied
+  Scientist Intern" at two hundred. Both now run the same two steps as
+  `find_postings` -- hybrid retrieval to rank, then the screen to remove --
+  via `_narrow_by_meaning`. Over the 30 real `not_relevant` rows,
+  `query="machine learning research"` keeps 6. Search alone would not have
+  done it: over a set that small it only reorders, so every row still comes
+  back. The screen is what turns a ranking into an answer.
+  * Nothing is recorded here. A `found` row would overwrite a real decision.
+  * A posting retrieval never saw is ranked last, never dropped -- it must not
+    vanish from the person's own pipeline because a query was added.
+  * Adding `query` to only one of the two was itself a hole: the model reached
+    for `past_decisions` and read titles again. Both, or neither.
+* **A schema can advertise an argument the function does not take.** `query`
+  landed in `past_decisions`' schema while the edit adding it to the signature
+  silently failed. The model passed it, correctly, and got a `TypeError` --
+  then recovered by dropping the argument, so the tool went on working in the
+  worse way and nothing looked broken.
+  `test_every_advertised_argument_is_one_the_function_takes` now walks every
+  schema property against `inspect.signature`.
+
 ### Nothing the screen removes is gone
 
 The load-bearing property, and the author's explicit requirement.

@@ -403,13 +403,25 @@ def reset_status(posting_id: str, note: str = "") -> dict[str, Any]:
     }
 
 
-def list_shortlist(status: str | None = None) -> list[dict[str, Any]]:
+def list_shortlist(status: str | None = None, *, query: str | None = None) -> list[dict[str, Any]]:
     """List postings the person is actually pursuing, optionally filtered.
 
     ``found`` is excluded unless asked for by name. A search can surface
     hundreds of postings and record every one of them; returning those here
     would bury the handful the person has actually decided something about,
     which is the only thing this tool is for.
+
+    ``query`` narrows by meaning, using the same two steps as
+    :func:`find_postings`: hybrid retrieval to rank, then
+    :mod:`agent_app.core.screen` to remove what is a different kind of job.
+    Without it, "the ML ones I applied to" was answered by handing the model
+    every applied posting and letting it read the titles -- which is fine at
+    ten and quietly drops "Applied Scientist Intern" at two hundred, because a
+    title does not have to contain the words you searched for.
+
+    Search alone is not enough here and that is the point: over a set this
+    small it only *reorders*, so every row still comes back. The screen is what
+    turns a ranking into an answer.
     """
     conn = get_db()
     sql = (
@@ -435,7 +447,55 @@ def list_shortlist(status: str | None = None) -> list[dict[str, Any]]:
         data["note"] = row["note"]
         data["updated_at"] = row["updated_at"]
         out.append(data)
-    return out
+    if not query or not out:
+        return out
+    return _narrow_by_meaning(out, query, status)
+
+
+def _narrow_by_meaning(
+    rows: list[dict[str, Any]], query: str, status: str | None
+) -> list[dict[str, Any]]:
+    """Rank a pipeline slice by a query, then screen it, the way search does.
+
+    Two rules make this different from :func:`find_postings`, and both come
+    from these postings already having been decided about:
+
+    * nothing is recorded. A `found` row here would overwrite a real decision,
+      and there is nothing to record anyway -- the person already knows about
+      every one of these.
+    * the returned shape is unchanged, so a narrowed shortlist renders exactly
+      like an un-narrowed one. Adding scores would push these rows into the
+      search-result renderer, which offers "not for me" on a job you already
+      applied to.
+    """
+    by_id = {row["posting_id"]: row for row in rows}
+    ids = tuple(by_id)
+    hits = retrieval.search(
+        query,
+        SearchFilters(kind="posting", posting_ids=ids, include_closed=True),
+        k=len(ids) * FIND_OVERSAMPLE,
+    )
+    # Ranked first, then anything retrieval never saw. A posting whose chunks
+    # are not embedded yet must not silently vanish from the person's own
+    # pipeline just because a query was added.
+    excerpts: dict[str, str] = {}
+    ordered: list[dict[str, Any]] = []
+    for hit in hits:
+        if hit.posting_id in by_id and hit.posting_id not in excerpts:
+            excerpts[hit.posting_id] = hit.text
+            ordered.append(by_id[hit.posting_id])
+    ordered += [row for row in rows if row["posting_id"] not in excerpts]
+
+    scope = f"pipeline status={status}" if status else "already in the person's pipeline"
+    verdict = screen.screen(
+        query,
+        [{**row, "excerpt": excerpts.get(row["posting_id"], "")} for row in ordered],
+        scope,
+    )
+    kept = [row for i, row in enumerate(ordered) if i not in verdict.dropped]
+    return kept + [
+        _screened_out(ordered[i], reason) for i, reason in sorted(verdict.dropped.items())
+    ]
 
 
 # How many companies and places to name in a corpus_stats answer. Enough to
@@ -562,6 +622,8 @@ def search_profile(query: str, limit: int = DEFAULT_PROFILE_LIMIT) -> list[dict[
 def past_decisions(
     status: str | None = None,
     limit: int = DEFAULT_DECISIONS_LIMIT,
+    *,
+    query: str | None = None,
 ) -> list[dict[str, Any]]:
     """What the person has already decided about postings, newest first.
 
@@ -575,6 +637,12 @@ def past_decisions(
     ``found`` is never included. A search records it in bulk and it means only
     that something was surfaced, so counting it as a decision would drown the
     real ones at a ratio of about fifty to one.
+
+    ``query`` narrows by meaning, exactly as in :func:`list_shortlist`. Both
+    return pipeline rows, so a ``query`` on only one of them is a hole: asked
+    "which of the ones I passed on were ML research", the model reaches for
+    this tool, gets thirty rows, and sorts them out by reading the titles --
+    which is the thing the narrowing exists to stop.
     """
     limit = max(1, min(int(limit), 200))
     conn = get_db()
@@ -602,7 +670,9 @@ def past_decisions(
         data["note"] = row["note"]
         data["decided_at"] = row["updated_at"]
         out.append(data)
-    return out
+    if not query or not out:
+        return out
+    return _narrow_by_meaning(out, query, status)
 
 
 # --- schemas ---------------------------------------------------------------
@@ -799,7 +869,11 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "use it for questions about what they are tracking ('what have I applied "
             "to', 'anything still just interested?') rather than find_postings, which "
             "searches all postings including the thousands never triaged. Returns the "
-            "posting summary plus its status and note, without the body."
+            "posting summary plus its status and note, without the body. Pass "
+            "`query` when the question is about a *kind* of job inside the pipeline "
+            "rather than the whole of it, and do not try to sort that out yourself by "
+            "reading the titles: a title does not have to contain the words that "
+            "describe it, and 'Applied Scientist Intern' is a machine learning job."
         ),
         "input_schema": {
             "type": "object",
@@ -811,6 +885,19 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                         "Return only postings in this state. Omit it to get the whole "
                         "shortlist, which is usually what a general question about the "
                         "pipeline wants."
+                    ),
+                },
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Narrow the pipeline to one kind of work, by meaning rather "
+                        "than by wording — 'the ML ones I applied to', 'which of my "
+                        "interviews are robotics'. Phrase it the way a posting would "
+                        "be written. Anything ruled out comes back marked "
+                        "`screened_out` with a reason; do not present those, and say "
+                        "how many there were. Omit this for a plain question about the "
+                        "pipeline: it costs a model call and there is nothing to "
+                        "narrow when they asked for all of it."
                     ),
                 },
             },
@@ -919,6 +1006,19 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "input_schema": {
             "type": "object",
             "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Narrow to one kind of work, by meaning rather than by wording "
+                        "— 'which of the ones I passed on were ML research'. Use this "
+                        "instead of reading the titles yourself and deciding: a title "
+                        "need not contain the words that describe it, and 'Applied "
+                        "Scientist Intern' is a machine learning job. What it rules "
+                        "out comes back marked `screened_out` with a reason; do not "
+                        "present those. Omit it when the question is about the "
+                        "decisions themselves rather than about a subject."
+                    ),
+                },
                 "status": {
                     "type": "string",
                     "enum": [s for s in STATUSES if s != "found"],

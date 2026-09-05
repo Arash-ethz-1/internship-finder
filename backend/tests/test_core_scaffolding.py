@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import sqlite3
 
 import pytest
@@ -288,6 +289,29 @@ def test_tool_functions_match_the_schemas() -> None:
     assert len(schema_names) == 7
     assert {"corpus_stats", "search_profile", "past_decisions"} < schema_names
     assert "search_postings" not in schema_names
+
+
+def test_every_advertised_argument_is_one_the_function_takes() -> None:
+    """A schema property the function does not accept is a guaranteed failure.
+
+    The model reads only the schema. Advertise an argument the signature does
+    not have and it will pass it, confidently and correctly, and get a
+    TypeError back -- one wasted round trip every time, and the model recovers
+    by dropping the argument, so the tool goes on working in a worse way and
+    nothing looks broken.
+
+    That happened on 2026-09-05: `query` reached `past_decisions`' schema while
+    the edit adding it to the signature silently did not apply. Cheap to
+    assert, invisible without it.
+    """
+    for schema in tools.TOOL_SCHEMAS:
+        function = tools.TOOL_FUNCTIONS[schema["name"]]
+        parameters = inspect.signature(function).parameters
+        takes_kwargs = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values())
+        for advertised in schema["input_schema"]["properties"]:
+            assert takes_kwargs or advertised in parameters, (
+                f"{schema['name']} advertises {advertised!r}, which it cannot accept"
+            )
 
 
 def test_find_postings_over_an_empty_index_returns_nothing(conn: sqlite3.Connection) -> None:
