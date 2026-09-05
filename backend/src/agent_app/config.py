@@ -38,6 +38,11 @@ DEFAULT_DISCOVERY_MODEL = "claude-haiku-4-5"
 # Classifying a subject line into four buckets is the cheapest judgement call
 # in the app, and it runs once per candidate email.
 DEFAULT_CLASSIFIER_MODEL = "claude-haiku-4-5"
+
+# Reads a search result list back and drops rows that are a different kind of
+# job. One call per search on top of the agent's own, so it is the cheap model
+# and stays the cheap model.
+DEFAULT_SCREEN_MODEL = "claude-haiku-4-5"
 # Which embedding backend to build. "local" runs a model on this machine and
 # needs no key at all, which is why it is the default: a fresh clone can embed
 # the whole corpus without signing up for anything.
@@ -83,6 +88,8 @@ class Settings:
     agent_model: str
     discovery_model: str
     classifier_model: str
+    screen_model: str
+    screen_results: bool
     embedding_provider: str
     embedding_model: str
     embedding_dim: int
@@ -142,6 +149,13 @@ class Settings:
             path.mkdir(parents=True, exist_ok=True)
 
 
+def _flag(raw: str | None, *, default: bool) -> bool:
+    """Read a boolean environment variable, tolerating how people write them."""
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
 def load_settings() -> Settings:
     """Build a :class:`Settings` from ``backend/.env`` plus the process environment."""
     load_dotenv(BACKEND_DIR / ".env", override=False)
@@ -187,6 +201,11 @@ def load_settings() -> Settings:
         agent_model=os.getenv("AGENT_MODEL") or DEFAULT_AGENT_MODEL,
         discovery_model=os.getenv("DISCOVERY_MODEL") or DEFAULT_DISCOVERY_MODEL,
         classifier_model=os.getenv("CLASSIFIER_MODEL") or DEFAULT_CLASSIFIER_MODEL,
+        screen_model=os.getenv("SCREEN_MODEL") or DEFAULT_SCREEN_MODEL,
+        # On by default: a screen nobody switched on is a screen that never
+        # runs. `SCREEN_RESULTS=0` turns it off for a run where the extra call
+        # per search is not wanted, such as timing retrieval on its own.
+        screen_results=_flag(os.getenv("SCREEN_RESULTS"), default=True),
         embedding_provider=provider,
         embedding_model=os.getenv("EMBEDDING_MODEL") or default_model,
         embedding_dim=int(os.getenv("EMBEDDING_DIM") or default_dim),

@@ -36,8 +36,68 @@ DEFAULT_MAX_ITERS = 12
 # is where the tokens actually go.
 DEFAULT_MAX_TOKENS = 4096
 
+# How many times one turn may call `find_postings`. This is the budget that
+# makes re-searching a real option rather than an unbounded one: without a
+# ceiling, "search again if the results are wrong" is an invitation to spend
+# twenty model calls discovering that the corpus does not contain the answer.
+# Four is enough for a first hypothesis and three corrections, which is more
+# rephrasing than a person would do before giving up.
+DEFAULT_MAX_SEARCHES = 4
+
+# The tools that count against that budget. The others are local database
+# reads: cheap, and the point of having them is that the agent reaches for
+# them freely.
+BUDGETED_TOOLS = ("find_postings",)
+
 SYSTEM_PROMPT = """You help one person track internship and new-grad \
 applications. You are talking to them about their own database of postings.
+
+**A first search is a hypothesis, not an answer.**
+
+You do not know how these postings are worded until you have seen some. Your
+first guess at the vocabulary is often wrong, and the results say so if you
+read them. So: search, then look at the titles that came back and ask whether
+they are the thing that was asked for. If they are not, search again with
+different words. You have a budget of a few searches per turn and you are
+expected to use more than one whenever the first is unconvincing.
+
+What "unconvincing" looks like, concretely. Someone asks for ML research
+internships. The first search returns an M&A analyst internship, a
+lab-automation internship and a frontend intern. Those are not near misses;
+they are evidence that the query matched filler text rather than the role.
+Searching again with "machine learning research internship" instead of "AI
+internship" is the whole fix, and it costs one more call.
+
+Do not hand the problem back. Noticing that half the results are off-target is
+the signal to search again yourself, not a question to pass to the person -
+"do you want to narrow this down?" after one search is the failure this whole
+instruction exists to prevent. Ask only once you have spent the budget, or
+when the ambiguity is genuinely about what they want rather than about how
+postings happen to be worded. Which words the corpus uses is your problem to
+solve, not theirs.
+
+Pass two or three alternate phrasings in `queries` on every search. Companies
+word the same job differently - "machine learning research intern", "deep
+learning PhD internship", "applied scientist intern" - and one phrasing finds
+only the companies that happened to use it.
+
+Before settling for a thin result, call `corpus_stats` with the same
+constraints. It says whether a better query would have helped or whether that
+is simply all there is, and those deserve different answers: one is "let me
+try again", the other is "there are only nine postings in that city at all,
+here they are". Never imply you selected ten out of many when ten was the
+whole set.
+
+On a vague or self-referential request - "something that fits me", or "ML
+research" with no other detail - call `search_profile` first. It returns the
+person's own project write-ups, and searching in the vocabulary they actually
+work in beats searching with generic words for the same idea.
+
+Before showing a long list, consider `past_decisions`. The roles they struck
+as not_relevant matched a search well enough to be shown and were rejected
+anyway, which is the mistake you are about to repeat. Drop your own likely
+false positives, and say that you did and why - never filter silently. It is
+evidence, not a rule: one rejection is noise, and people change their minds.
 
 Working rules:
 
@@ -50,6 +110,9 @@ Working rules:
   record of what the person actually did.
 - If a tool returns an error, say what failed and what you tried. Do not retry
   the same call unchanged.
+- Say what you actually did when it is not obvious: that the first phrasing
+  came back wrong so you tried another, or that a count is the whole corpus
+  rather than a selection. Do not narrate every call.
 - Be brief. This is a working tool, not a chat companion."""
 
 
@@ -178,6 +241,7 @@ def run_agent(
     user_message: str,
     history: list[dict[str, Any]],
     max_iters: int = DEFAULT_MAX_ITERS,
+    max_searches: int = DEFAULT_MAX_SEARCHES,
 ) -> Iterator[AgentEvent]:
     """Run the tool-use loop, yielding events as they happen.
 
@@ -201,6 +265,12 @@ def run_agent(
       allowed to kill the loop; the model can then recover or explain
     * hitting ``max_iters`` still emits a :class:`DoneEvent`, with whatever
       text there is
+    * at most ``max_searches`` calls to a tool in :data:`BUDGETED_TOOLS`
+      succeed in one turn; beyond that the call is refused with an explanation
+      the model can act on. The system prompt tells it to search again when
+      the first results look wrong, and this is what stops "again" from being
+      unbounded — an agent convinced the corpus contains something it does not
+      will otherwise rephrase until ``max_iters`` runs out.
 
     Dependencies come from :mod:`agent_app.runtime` and
     :mod:`agent_app.config` (``settings.require_anthropic_key()``,
@@ -217,6 +287,7 @@ def run_agent(
     trace: list[ToolCall] = []
     spoken: list[str] = []
     iters = 0
+    searches = 0
 
     while iters < max_iters:
         iters += 1
@@ -248,7 +319,15 @@ def run_agent(
             yield ToolCallEvent(name=call.name, input=arguments)
 
             started = time.perf_counter()
-            output, failed = _run_tool(call.name, arguments)
+            budgeted = call.name in BUDGETED_TOOLS
+            if budgeted and searches >= max_searches:
+                # Refused, not silently dropped, and it still travels through
+                # the trace: a turn that ran out of searches should look
+                # different in the panel from one that chose to stop.
+                output, failed = _budget_spent(max_searches), True
+            else:
+                searches += int(budgeted)
+                output, failed = _run_tool(call.name, arguments)
             ms = int((time.perf_counter() - started) * 1000)
 
             yield ToolResultEvent(name=call.name, output=output, ms=ms)
@@ -270,6 +349,23 @@ def run_agent(
             trace=trace,
             iters=iters,
         )
+    )
+
+
+def _budget_spent(max_searches: int) -> str:
+    """What a tool call refused by the search budget tells the model.
+
+    Phrased as an instruction rather than an error, because it is not a
+    failure: the loop worked as designed and the remaining question is what to
+    say. Naming what it already has is what stops the model reporting an
+    internal limit to the person as though it were a property of their corpus.
+    """
+    return (
+        f"Search budget spent: {max_searches} searches already ran this turn. "
+        "Answer now with the results you have. If they are still not what was "
+        "asked for, say that plainly, say which phrasings you tried, and use "
+        "corpus_stats to say whether anything matching exists at all — do not "
+        "describe this limit to the person as though the database were empty."
     )
 
 

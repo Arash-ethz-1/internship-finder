@@ -434,8 +434,10 @@ def cmd_eval(args: argparse.Namespace) -> int:
         return 2
 
     print(f"{len(queries)} labelled queries from {path}")
+    if args.through_agent:
+        print("running each query through a whole agent turn -- real model calls, slow")
     try:
-        result = run_eval(queries)
+        result = run_eval(queries, through_agent=args.through_agent, max_searches=args.max_searches)
     except ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -738,6 +740,23 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     p_eval.add_argument("--path", help="eval set to use (default data/eval/queries.jsonl)")
+    p_eval.add_argument(
+        "--through-agent",
+        action="store_true",
+        help=(
+            "score what a full agent turn surfaces rather than what retrieval.search "
+            "returns. The only mode that can see re-searching, fused phrasings and "
+            "taste filtering, which all live above search. Costs real model calls."
+        ),
+    )
+    p_eval.add_argument(
+        "--max-searches",
+        type=int,
+        help=(
+            "with --through-agent, cap searches per turn. Pass 1 for the single-shot "
+            "baseline Phase 11 is measured against; omit for the normal budget."
+        ),
+    )
     p_eval.set_defaults(func=cmd_eval)
 
     p_sync = sub.add_parser(

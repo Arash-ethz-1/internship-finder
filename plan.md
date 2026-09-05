@@ -654,6 +654,50 @@ reverted rather than kept for being clever.
 
 ---
 
+### Phase 12 - Screen the result list
+
+*Added 2026-09-05, after Phase 11 shipped and the lists were still wrong.*
+
+Phase 11 gave the agent a budget to search again. It reads its own titles,
+notices the results are off, and re-queries. What it still cannot do is
+**remove a row**. The list the person sees is the fused ranking exactly as
+retrieval produced it, and a quantitative trading role ranks high on "ML
+research internship" because it genuinely is quantitative research written in
+the same vocabulary. No value of `rrf_k` fixes that: nothing in a score knows
+what kind of work the person wants.
+
+So one model call per search reads the candidate list back against the request
+and says which rows are a different kind of job. Cheap model, titles plus a
+short excerpt, `FIND_OVERSAMPLE` already retrieves enough candidates to
+backfill from.
+
+**This is not the reranker the non-goals forbid.** It never reorders: kept
+rows stay in fused-score order, and their `component_scores` are untouched, so
+the trace bars still show the arithmetic that put them there. It only removes.
+The banned thing is a scoring model between retrieval and the list; this is a
+judgement about subject matter that no similarity score can express.
+
+**Nothing it removes is gone.** A screened-out posting is *not* recorded as
+`found`, so it stays undecided and the next search offers it again, and it
+comes back in the same tool result flagged and folded away, so the person can
+see what was taken and why. This is the load-bearing part. A filter that
+silently drops jobs is the one component of this app whose cost is invisible -
+you cannot miss a posting you were never shown - and it fails towards keeping
+at every step: no key, a timeout, prose instead of JSON, an index for a row
+the model was never shown, all end with the unscreened list.
+
+**Check:** `cli eval --through-agent` does not lose recall against the same
+run with `SCREEN_RESULTS=0`, and a live search for ML research no longer has
+quant trading roles in the list it shows.
+
+*Result, 2026-09-05: the second half passed and the first half did not, and
+the first half was the wrong thing to ask for. recall@k has no term for a
+result that should not be there, so a feature that only removes wrong results
+can never raise it. Measuring this needs negative labels in the eval set. See
+PROGRESS.md, session 8.*
+
+---
+
 ## Non-goals
 
 Do not build these, do not scaffold them, do not leave TODOs for them:

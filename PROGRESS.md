@@ -4,11 +4,205 @@ Running state of the project. `plan.md` is the spec (what we intend to build);
 this file is the log (what is actually built, what is next, and what we decided
 along the way that the spec does not say).
 
-**Last updated:** 2026-09-02, session 6. Every phase in `plan.md` is done, and
-session 6 built nine extensions past it: places, closed postings, a European
-board, and the app surfaces that used to be CLI-only.
+**Last updated:** 2026-09-05, session 8: Phase 12, the screen. The agent no
+longer just re-searches when a list is wrong -- it removes the rows that are a
+different kind of job, and shows them folded away rather than deleting them.
+Its check is not met and the reason is the metric; read the session 8 note
+before touching it. Earlier the same day: docs, including one temporary note on
+letter framing directly below.
 
 ---
+
+## TEMPORARY: the letter framing in the docs, 2026-09-05
+
+**This is meant to be reverted, and nothing in the code changed.**
+
+`README.md` and `VIDEO-SCRIPT.md` no longer lead with "drafts motivational
+letters". They describe the same feature as working out which of your projects
+to mention for a posting, showing the extracts it grounded in, and helping with
+phrasing. The reason is the demo video and the public repo: a recruiter who
+lands here while holding an application from the author should not read the
+headline as "this person generates the letters he sends me".
+
+What was changed, all prose:
+
+* `README.md` opening sentence, the "Tells you what to mention" bullet (was
+  "Drafts letters"), the `/profile` gloss, and the two `draft-letter` lines.
+* `VIDEO-SCRIPT.md` section 4, retitled "What to mention" and reshot around the
+  `grounded in` extracts panel rather than the letter body. (That file is
+  untracked; the change lives only on the author's machine.)
+
+What did NOT change, and is why the framing is selective rather than false:
+`core/letters.py`, `routes_letters.py`, the `draft-letter` command, the
+`/letters/:id` route and `LETTER_MODEL` are all untouched and still say
+"letter". Anyone reading the source sees exactly what it does.
+
+**Restore after the video is recorded.** `git log -- README.md` finds this
+change; the previous wording is one `git revert` or `git show` away. The
+matching `VIDEO-SCRIPT.md` edit is not in git at all -- that file is local only
+now, see `.gitignore` -- so revert it by hand.
+
+---
+
+## Session 8, 2026-09-05: Phase 12, the screen
+
+Phase 11 let the agent search again. It still could not **remove a row**: the
+list was the fused ranking exactly as retrieval produced it, so a quant trading
+role sat in an "ML research internship" list because it genuinely is
+quantitative research written in the same words. New `core/screen.py`: one
+cheap-model call per search reads the candidates back against the request and
+says which are a different kind of job.
+
+**It works, visibly.** "machine learning research internship" with
+`level=intern` kept 10 ML roles and folded away 10 -- Virtu, Jump Trading x4,
+Tower, WorldQuant, Point72, all quant trading. That is the complaint this phase
+was opened for, gone.
+
+**The check as written in `plan.md` fails, and the metric is the wrong one.**
+
+| through the agent, 4 searches | recall@5 | recall@10 | recall@20 |
+|---|---|---|---|
+| `SCREEN_RESULTS=0` | 0.575 | 0.750 | 0.851 |
+| screen on | 0.575 | **0.694** | 0.812 |
+
+Recall went *down*, and a direct measurement says the drop is real rather than
+run-to-run noise: putting each labelled query's own relevant postings in front
+of the screen, it throws away **3 of 40**. But recall@k counts only postings
+that should be there and has no term for postings that should not, so a feature
+whose entire job is removing wrong results cannot do anything to that number
+except lower it. The eval set has no negative labels, so what the screen buys
+is currently unmeasurable. Do not read the table as "the screen is worse".
+
+Two prompt rules were measured, not guessed:
+
+* **Say which filters SQL already applied.** The first version forbade judging
+  seniority, claiming level was already filtered -- untrue when the agent
+  passes no `level`, and the screen dropped senior roles anyway. Now
+  `_applied_filters` names the constraints that really ran, and the prompt says
+  everything else is the screen's to judge. Made it coherent in both directions.
+* **Match strictness to how specific the request is.** 4/40 -> 3/40. A request
+  naming a field ("AI internships in Europe") is asking to see the field; one
+  naming a kind of work ("ML research internship") licenses dropping other work.
+* **Tried and reverted:** "judge the role, never the employer". Sounds right,
+  measured worse -- 3/40 -> 5/40. It made the model argue with itself about
+  Jump Trading and drop more of it.
+
+### Nothing the screen removes is gone
+
+The load-bearing property, and the author's explicit requirement.
+
+* A screened-out posting is **not** recorded as `found`, so it stays undecided
+  and the next search offers it again.
+* It comes back in the same tool result, flagged `screened_out` with a reason,
+  and the trace folds it into an "N screened out" disclosure -- the same idiom
+  the inbox uses for mail it decided was not about an application.
+* **Every** drop is reported, not a sample. A cap here would be the one place
+  in this app where a posting vanishes with nothing on screen saying it existed.
+* Screened-out rows carry no `excerpt` and no `component_scores`, which is
+  precisely what keeps them out of `ResultList` and out of bulk triage.
+* Failing safe: no key, a timeout, prose instead of JSON, or an index for a row
+  the model was never shown all end with the unscreened list. `SCREEN_RESULTS=0`
+  turns it off.
+
+### Worth knowing
+
+* **Not the reranker `plan.md` bans.** It never reorders and never rescores;
+  kept rows stay in fused order with `component_scores` untouched. It only
+  removes. Flagging it because the non-goal is one word away.
+* **Cost:** one Haiku call per search, 2-3 s warm (9 s cold once), ~2k prompt
+  tokens for 60 candidates. With `max_searches=4` that is up to four extra
+  calls a turn.
+* `test_agentic_search.py` now sets `SCREEN_RESULTS=0`: the screen calls the
+  same SDK those tests replace wholesale, so with it on it eats replies
+  scripted for the agent.
+* The eval set still has no negative labels. Twenty of the author's own would
+  make this measurable; six of Claude's cannot.
+
+---
+
+## Session 7, 2026-09-03: Phase 11, all five steps
+
+The whole phase in one go. `cli eval` on a six-query smoke set, same labels
+each time:
+
+| | recall@5 | recall@10 | recall@20 |
+|---|---|---|---|
+| `retrieval.search` alone | 0.103 | 0.169 | 0.256 |
+| agent, 1 search | 0.369 | 0.458 | 0.575 |
+| agent, 4 searches | 0.575 | **0.681** | 0.810 |
+
+The middle row is the honest baseline and the reason `--max-searches` exists.
+Comparing the agent against raw `search` credits the loop with filters and
+tool use it did not do; comparing 1 search against 4 isolates step 1. That is
++49% relative at k=10 for the loop alone.
+
+**What was built, per bullet in `plan.md`:**
+
+1. **Re-searching.** `run_agent` grew `max_searches` (default 4) and
+   `BUDGETED_TOOLS`. Past the budget a `find_postings` call is *refused with
+   an explanation*, not dropped -- and the refusal still travels through the
+   trace, so a turn that ran out looks different from one that chose to stop.
+   The system prompt was rewritten around "a first search is a hypothesis".
+2. **Several phrasings, fused.** `retrieval.search_many`, and a `queries`
+   array on `find_postings`. `component_scores` still holds exactly `dense`
+   and `bm25` summing to `score`, because each phrasing's dense contribution
+   sums into one and its keyword contribution into the other -- the wire
+   contract with the trace panel is untouched.
+3. **`corpus_stats`.** Counts over the same `chunks`-joined shape search uses
+   (`retrieval.corpus_sql`, sharing `_filter_clauses`), so the ceiling it
+   reports is one search can actually reach.
+4. **`search_profile`.** The letter drafter's corpus, finally visible to
+   `/chat`.
+5. **`past_decisions`.** The 30 `not_relevant` rows as negative labels.
+   `found` is excluded and that is the entire point: a search records those in
+   bulk at about fifty to one against real decisions.
+
+Plus `run_eval(through_agent=True)` and `cli eval --through-agent
+[--max-searches N]`.
+
+### Two things measured that contradict the plan's assumptions
+
+- **Bullet 2 costs no extra model calls at all.** `plan.md` gates steps 1 and
+  2 together on cost. Wrong for 2: the model emits every phrasing in one tool
+  call. And warm, 4 phrasings cost 1.6x one search (0.283s -> 0.454s), not 4x,
+  because the candidate load and vector gather are shared. Only bullet 1 costs
+  extra model calls.
+- **Three of the five steps never needed the eval set.** 3, 4 and 5 are new
+  read-only tools, not ranking changes; their correctness is a unit test. The
+  gate was real only for 1 and 2.
+
+### Two live failures found by running it, and fixed
+
+- **The agent diagnosed and then asked instead of acting.** First run of "AI
+  internships in Europe": it noticed "some of these don't look like AI-focused
+  roles" and asked the author to narrow it down. Correct diagnosis, wrong
+  move. A paragraph was added telling it that which words the corpus uses is
+  its problem, not the person's. After: two searches, then two `corpus_stats`
+  calls to check the ceiling.
+- **`corpus_stats` was called with a `query` argument.** The model carries
+  `find_postings`' shape straight across. It cost a `TypeError` and a wasted
+  round trip, so `query` is now accepted and ignored -- a count is over
+  constraints, and there was nothing to do with the text either way.
+
+### Worth knowing
+
+- **The eval set is a smoke test, not an instrument.** Six queries, 40 labels,
+  Claude's judgement pooled from several phrasings per intent and checked
+  against each posting's real title. The author declined to hand-label
+  (no time) and delegated tuning. So it is good evidence for "no worse" and
+  weak evidence for any claim of improvement -- and weaker still because the
+  same party wrote the labels and made the changes. Overwrite the labels
+  freely; the file says so at the top.
+- **Running the eval mutates `applications`.** `find_postings` records what it
+  returns as `found`, so the eval and demo runs took `found` from 213 to 244.
+  Not destructive -- `found` is not a decision and `reset_status` undoes it --
+  but `cli eval --through-agent` is not read-only and should not be run
+  casually against the real database.
+- **`core/agent.py` was edited.** The author had reserved `run_agent` for
+  himself; asked to do all five bullets, which is impossible without the loop,
+  he confirmed by instruction rather than by answering the question. The
+  exercise suite still passes, so his own rewrite has an unchanged regression
+  test.
 
 ## Session 6, 2026-09-02: the extensions
 
@@ -232,7 +426,8 @@ appends the vectors and assigns `vector_row`. The database never leaves this
 machine and the repository never reaches the cluster; `embed_chunks.py` imports
 nothing from `agent_app` and needs only `fastembed` and `numpy`.
 `cluster/README.md` has the conda setup, the `sbatch` job and the etiquette
-notes; `cluster/job.sh` needs `TODO_USERNAME` replaced in three places.
+notes; `cluster/job.sh` takes the cluster login from `$USER`, so it carries no
+username and needs no editing.
 
 **Verified end to end on real data**, at 20 chunks: export -> `embed_chunks.py`
 -> import -> a hybrid search returning hits with both `dense` and `bm25`
@@ -297,17 +492,33 @@ count or highest chunk id no longer matches the table.
 
 ## Resume here
 
-**Phase 11 is new in `plan.md`: make the retrieval agentic.** Added 2026-09-03
-after the author observed that the agent only parses the request into a filter
-and searches once — which is true, and is a design problem rather than a prompt
-problem. Five steps, ordered; the first (read your own results and search
-again) is worth more than the rest combined. It is deliberately gated on the
-eval set, because steps 1 and 2 cost 2-4x the model calls and there is
-currently no way to tell whether they helped.
+**Phase 12 is built (session 8). Nothing in `plan.md` is unbuilt.**
 
-**The one thing worth doing first: 17 Personio postings are chunked but not
-embedded.** Session 6 ingested them and everything else in the corpus already
-has vectors, so:
+The next things, in order of value:
+
+1. **Negative labels in the eval set.** This is now the blocker, not a nicety.
+   Phase 12 trades recall for precision and the eval set can only see the half
+   it costs. `queries.jsonl` needs a `not_relevant_posting_ids` field and a
+   precision number beside `recall_at_k`; until then "did the screen help" is
+   an opinion. The author's `not_relevant` triage rows are the natural source.
+2. **Look at `/chat` in a browser.** The trace panel now renders three new
+   result shapes -- `corpus_stats` counts, `past_decisions` rows, profile
+   passages with score bars -- and none of them has been seen. This joins the
+   long list below of surfaces that compile, serve, and have never been
+   looked at.
+3. **Tune the free dials.** `DEFAULT_RRF_K` (60), `BM25_K1`/`BM25_B`
+   (1.2/0.75), `FIND_OVERSAMPLE` (6), `DEFAULT_MAX_SEARCHES` (4) and the tool
+   descriptions all change with no re-embedding; `cli eval` reads in seconds.
+   `DEFAULT_MAX_CHARS` and the embedding model do not -- those invalidate all
+   135,934 vectors and need a cluster round trip, which makes them bad
+   experiments regardless of who runs them.
+4. **Better labels.** The smoke set is six queries of Claude's judgement.
+   Twenty of the author's would make the number mean something.
+
+**Superseded:** the Personio embedding backlog below is done -- the chunks
+table has 0 unembedded rows.
+
+**The old note, kept for the commands:**
 
 ```
 cd backend
@@ -412,6 +623,8 @@ suite is the regression test for anything rewritten.
 | — | Places, closed postings, Personio | Claude | ✅ done 2026-09-02 | `22470fc` |
 | — | Manual postings, revision, profile, sync | Claude | ✅ done 2026-09-02 | `5924c86` |
 | — | The dashboard for all of it | Claude | ✅ done 2026-09-02 | `e16ad34` |
+| 11 | Make the retrieval agentic | Claude | ✅ done 2026-09-03, all five steps | |
+| 12 | Screen the result list | Claude | ⚠️ built 2026-09-05, check not met | recall metric cannot see it |
 
 **Every phase in `plan.md` is now done.** What is left is not code: API keys,
 a labelled eval set, real write-ups in `profile/`, and the author's own rewrite

@@ -278,7 +278,15 @@ def test_tool_functions_match_the_schemas() -> None:
     # were never recorded as `found` and so were offered again forever. Every
     # tool the model can reach is one more thing that can go wrong, so the
     # count is asserted rather than left to drift.
-    assert len(schema_names) == 4
+    #
+    # Seven since 2026-09-03 (Phase 11). The three added are all *reading*
+    # tools, which is why widening the surface was acceptable: corpus_stats
+    # counts, search_profile reads the author's own write-ups, past_decisions
+    # reads triage history. None of them writes, and none of them is a second
+    # way to do what another tool does -- the failure that retired
+    # `search_postings`.
+    assert len(schema_names) == 7
+    assert {"corpus_stats", "search_profile", "past_decisions"} < schema_names
     assert "search_postings" not in schema_names
 
 

@@ -63,12 +63,7 @@ export type StatusOrUntriaged = Status | "untriaged";
 
 export type Level = "intern" | "newgrad" | "unknown";
 /** `manual` is not a board: it is a posting typed in by hand. */
-export type Source =
-  | "greenhouse"
-  | "lever"
-  | "ashby"
-  | "personio"
-  | "manual";
+export type Source = "greenhouse" | "lever" | "ashby" | "personio" | "manual";
 
 export const REGIONS = [
   "europe",
@@ -217,6 +212,23 @@ export interface FoundPosting {
   component_scores: Record<string, number>;
   excerpt: string;
   status: StatusOrUntriaged;
+}
+
+/** A posting the screen removed from a result list.
+ *
+ *  Deliberately not a `FoundPosting`: it carries no score and no excerpt,
+ *  which is what keeps it out of the list of things to act on. It is here so
+ *  the screen can be checked, not so the posting can be triaged from the
+ *  trace. */
+export interface ScreenedPosting {
+  posting_id: string;
+  company: string;
+  title: string;
+  location: string | null;
+  level: string;
+  url: string;
+  screened_out: true;
+  screen_reason: string;
 }
 
 export interface BulkStatusResult {
@@ -440,9 +452,7 @@ export function reviseLetter(
 
 // --- postings you enter yourself -------------------------------------------
 
-export function createPosting(
-  body: ManualPostingBody,
-): Promise<PostingDetail> {
+export function createPosting(body: ManualPostingBody): Promise<PostingDetail> {
   return request<PostingDetail>("/api/postings", {
     method: "POST",
     body: JSON.stringify(body),

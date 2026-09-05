@@ -117,12 +117,69 @@ def recall_at_k(retrieved: list[str], relevant: list[str], k: int) -> float:
     return len(found) / len(wanted)
 
 
-def run_eval(queries: list[EvalQuery], k_values: tuple[int, ...] = DEFAULT_K_VALUES) -> EvalResult:
+def agent_posting_ids(query: str, max_searches: int | None = None) -> list[str]:
+    """Posting ids one full agent turn surfaced, best first. Category A.
+
+    The vantage point :func:`run_eval` lacks by default. ``run_eval`` scores
+    ``retrieval.search`` directly, which is the right instrument for chunking
+    and fusion changes and is *blind to the agent*: re-searching, several
+    phrasings and taste filtering all live in the loop above ``search``, so a
+    perfect implementation of them moves that number by exactly zero.
+
+    Ordering is a judgement call and worth stating plainly, because getting it
+    wrong flatters or libels the agent by several points of recall. Results
+    from *later* searches rank ahead of earlier ones, each search keeping its
+    own internal order. The reasoning: the agent re-queried because it judged
+    the previous results wrong, so its last hypothesis is its considered
+    answer, and ranking a discarded first guess ahead of it would punish the
+    behaviour this phase exists to add. The union is kept rather than only the
+    final search, because every posting a search returns really does land in
+    the person's grid.
+
+    ``max_searches`` is the A/B switch for Phase 11's first step. Passing 1
+    gives the single-shot baseline the phase is measured against: same tools,
+    same filters, same fused phrasings, one search. The difference between
+    that and the default is the loop, isolated from everything else that
+    changed at the same time.
+    """
+    from .agent import DEFAULT_MAX_SEARCHES, collect_result, run_agent
+
+    budget = DEFAULT_MAX_SEARCHES if max_searches is None else max_searches
+    result = collect_result(run_agent(query, [], max_searches=budget))
+    ids: list[str] = []
+    for call in reversed(result.trace):
+        if call.name != "find_postings" or not isinstance(call.output, list):
+            continue
+        for row in call.output:
+            # Screened-out rows travel back in the same list so the person can
+            # see what was removed. They are not results, and counting them
+            # here would measure the unscreened list and report the screen as
+            # having done nothing.
+            if not isinstance(row, dict) or row.get("screened_out"):
+                continue
+            if row.get("posting_id"):
+                ids.append(str(row["posting_id"]))
+    return list(dict.fromkeys(ids))
+
+
+def run_eval(
+    queries: list[EvalQuery],
+    k_values: tuple[int, ...] = DEFAULT_K_VALUES,
+    *,
+    through_agent: bool = False,
+    max_searches: int | None = None,
+) -> EvalResult:
     """Run every query through search and report mean recall at each k.
 
     Calls :func:`agent_app.core.retrieval.search` for each query, takes the
     posting ids from the hits in rank order, and scores them with
     :func:`recall_at_k`.
+
+    With ``through_agent=True`` it instead runs each query through
+    :func:`agent_posting_ids` — a whole agent turn, tools and all — and scores
+    what the agent actually surfaced. That is the only mode in which the
+    Phase 11 work is visible at all; the default measures the retrieval layer
+    alone and cannot see the loop above it.
 
     Search returns *chunk* hits while the labels are *posting* ids, so chunks
     are collapsed to their parent posting, keeping the best rank of each.
@@ -139,8 +196,13 @@ def run_eval(queries: list[EvalQuery], k_values: tuple[int, ...] = DEFAULT_K_VAL
     depth = max(k_values, default=0) * CHUNK_OVERSAMPLE
 
     for query in queries:
-        hits = retrieval.search(query.query, retrieval.SearchFilters(), depth)
-        postings = list(dict.fromkeys(h.posting_id for h in hits if h.posting_id))
+        if through_agent:
+            # Real model calls and real tool calls, one turn per query. Slow
+            # and not free, which is why it is opt-in.
+            postings = agent_posting_ids(query.query, max_searches)
+        else:
+            hits = retrieval.search(query.query, retrieval.SearchFilters(), depth)
+            postings = list(dict.fromkeys(h.posting_id for h in hits if h.posting_id))
         per_query[query.query] = {
             k: recall_at_k(postings, list(query.relevant_posting_ids), k) for k in k_values
         }

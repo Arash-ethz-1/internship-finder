@@ -186,14 +186,14 @@ class CandidateKey:
     vector_row: int | None
 
 
-def candidate_sql(filters: SearchFilters, *, with_text: bool = True) -> tuple[str, list[Any]]:
-    """Build the SQL that narrows chunks down to what the filters allow.
+def _filter_clauses(filters: SearchFilters) -> tuple[list[str], list[Any]]:
+    """The WHERE clauses and parameters one :class:`SearchFilters` implies.
 
-    Category A. Split out from :func:`search` so the filtering is testable on
-    its own and so the Category B work is purely about scoring.
-
-    ``with_text=False`` selects the same rows without the one column that
-    dominates the transfer.
+    Category A. Split out of :func:`candidate_sql` so that counting postings
+    (:func:`corpus_sql`) and retrieving chunks apply *identical* filter
+    semantics. Two hand-maintained copies of this logic would drift, and the
+    drift would show up as an agent told there are 199 matching postings that
+    can then only ever retrieve 140 of them.
     """
     where: list[str] = []
     params: list[Any] = []
@@ -247,6 +247,20 @@ def candidate_sql(filters: SearchFilters, *, with_text: bool = True) -> tuple[st
         where.append("a.status = ?")
         params.append(filters.status)
 
+    return where, params
+
+
+def candidate_sql(filters: SearchFilters, *, with_text: bool = True) -> tuple[str, list[Any]]:
+    """Build the SQL that narrows chunks down to what the filters allow.
+
+    Category A. Split out from :func:`search` so the filtering is testable on
+    its own and so the Category B work is purely about scoring.
+
+    ``with_text=False`` selects the same rows without the one column that
+    dominates the transfer.
+    """
+    where, params = _filter_clauses(filters)
+
     columns = "c.id, c.posting_id, c.profile_doc, c.ordinal, c.vector_row"
     if with_text:
         columns += ", c.text"
@@ -260,6 +274,43 @@ def candidate_sql(filters: SearchFilters, *, with_text: bool = True) -> tuple[st
     if where:
         sql += " WHERE " + " AND ".join(where)
     return sql + " ORDER BY c.id", params
+
+
+def corpus_sql(
+    filters: SearchFilters,
+    columns: str,
+    *,
+    group_by: str | None = None,
+    order_by: str | None = None,
+    limit: int | None = None,
+) -> tuple[str, list[Any]]:
+    """Aggregate over the postings a filter set admits. Category A.
+
+    Counts run over the same ``chunks``-joined shape as :func:`candidate_sql`,
+    not over ``postings`` directly, and that is deliberate: it counts postings
+    that are actually *retrievable*. A posting with no chunks cannot be
+    returned by any search, so including it in "how many match" would promise
+    the agent something search can never deliver.
+
+    ``columns``, ``group_by`` and ``order_by`` are interpolated, so they must
+    stay literals written here. Only the filter values are parameterised, and
+    those are the only part a model ever influences.
+    """
+    where, params = _filter_clauses(filters)
+    sql = (
+        f"SELECT {columns} FROM chunks c "
+        "LEFT JOIN postings p ON p.id = c.posting_id "
+        "LEFT JOIN applications a ON a.posting_id = c.posting_id"
+    )
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    if group_by:
+        sql += f" GROUP BY {group_by}"
+    if order_by:
+        sql += f" ORDER BY {order_by}"
+    if limit is not None:
+        sql += f" LIMIT {int(limit)}"
+    return sql, params
 
 
 def load_candidates(conn: sqlite3.Connection, filters: SearchFilters) -> list[Candidate]:
@@ -469,6 +520,92 @@ def search(query: str, filters: SearchFilters, k: int = 10) -> list[SearchHit]:
     top = np.argsort(-fused, kind="stable")[:k]
     # Text is fetched for the k rows that survived, not the 135,000 that were
     # scored. Nothing above this line needs it.
+    texts = load_texts(conn, [candidates[i].chunk_id for i in top])
+    return [
+        SearchHit(
+            chunk_id=candidates[i].chunk_id,
+            posting_id=candidates[i].posting_id,
+            profile_doc=candidates[i].profile_doc,
+            ordinal=candidates[i].ordinal,
+            text=texts.get(candidates[i].chunk_id, ""),
+            score=float(fused[i]),
+            rank=rank,
+            component_scores={name: float(part[i]) for name, part in parts.items()},
+        )
+        for rank, i in enumerate(top, start=1)
+    ]
+
+
+# --- several phrasings at once ---------------------------------------------
+
+
+# How many phrasings of one request are worth fusing. Each one costs a BM25
+# scan over the candidate set; the embeddings are batched into a single call,
+# so the marginal cost of a query is small but not zero.
+MAX_FUSED_QUERIES = 6
+
+
+def search_many(
+    queries: list[str],
+    filters: SearchFilters,
+    k: int = 10,
+    rrf_k: int = DEFAULT_RRF_K,
+) -> list[SearchHit]:
+    """Search several phrasings of one request and fuse them into one ranking.
+
+    One phrasing is a lottery ticket on vocabulary. ``AI internship`` and
+    ``machine learning research internship`` mean the same thing to a person
+    and return disjoint results here, because "AI" is filler in 2026 postings
+    and "machine learning research" is not. Rather than gamble on which
+    wording the corpus happens to use, score each phrasing separately and fuse
+    the rankings.
+
+    :func:`fuse` never cared whether its score lists came from two retrievers
+    or from six queries — it combines rankings. This runs ``2 * len(queries)``
+    of them: a dense and a keyword ranking per phrasing.
+
+    ``component_scores`` still holds exactly ``dense`` and ``bm25``, summing to
+    ``score``, because every phrasing's dense contribution is summed into one
+    and every phrasing's keyword contribution into the other. That keeps the
+    stacked bar in the retrieval trace meaning what it has always meant, and
+    keeps the wire contract with the frontend intact.
+    """
+    cleaned = list(dict.fromkeys(q.strip() for q in queries if q and q.strip()))
+    if not cleaned:
+        return []
+    if len(cleaned) == 1:
+        return search(cleaned[0], filters, k)
+    cleaned = cleaned[:MAX_FUSED_QUERIES]
+
+    conn = runtime.get_db()
+    candidates = load_candidate_keys(conn, filters)
+    if not candidates:
+        return []
+
+    matrix = runtime.get_vectors()
+    rows = np.array([-1 if c.vector_row is None else c.vector_row for c in candidates])
+    embedded = (rows >= 0) & (rows < len(matrix))
+    # Gathered once and reused for every phrasing. This is the whole reason
+    # N queries do not cost N times a single search.
+    embedded_matrix = matrix[rows[embedded]] if embedded.any() else None
+
+    query_vecs = runtime.get_provider().embed(cleaned)  # one batched request
+    index = runtime.get_bm25_index()
+    chunk_ids = [c.chunk_id for c in candidates]
+
+    dense_total = np.zeros(len(candidates), dtype=np.float64)
+    keyword_total = np.zeros(len(candidates), dtype=np.float64)
+    for position, query in enumerate(cleaned):
+        dense = np.zeros(len(candidates), dtype=np.float64)
+        if embedded_matrix is not None:
+            dense[embedded] = dense_scores(query_vecs[position], embedded_matrix)
+        dense_total += rrf_contribution(dense, rrf_k)
+        keyword_total += rrf_contribution(index.scores(query, chunk_ids), rrf_k)
+
+    parts = {COMPONENT_DENSE: dense_total, COMPONENT_BM25: keyword_total}
+    fused = dense_total + keyword_total
+
+    top = np.argsort(-fused, kind="stable")[:k]
     texts = load_texts(conn, [candidates[i].chunk_id for i in top])
     return [
         SearchHit(
