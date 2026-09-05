@@ -8,16 +8,15 @@ inbox to suggest what happened to the applications you sent.
 
 Everything runs locally. One SQLite file, one numpy array, one inverted index.
 
-`4 boards` · `24,533 postings` · `579 companies` · `135,934 embedded chunks` ·
-`94.4% of locations resolved` · `~2s search`
+`4 boards` · `30,968 postings` · `671 companies` · `176,507 embedded chunks` ·
+`92.6% of locations resolved` · `~2s search`
 
 https://github.com/user-attachments/assets/fa1f8559-f007-4473-85ae-d516d4965903
 
 **The walkthrough**, 4 minutes: the corpus and its filters, the agent picking its own filters and re-searching when the results are wrong, the screen removing quant trading roles from a machine learning search, grounded letter drafting, and the inbox suggesting what happened to an application without acting on it.
 
 This is a learning project. [`plan.md`](plan.md) is the spec and takes precedence
-over this file; [`PROGRESS.md`](PROGRESS.md) is the engineering log and
-[`CAPABILITIES.md`](CAPABILITIES.md) is the inventory of what is built.
+over this file.
 
 ---
 
@@ -31,9 +30,9 @@ closed rather than deleted, because the letter you wrote still points at it.
 
 **Resolves locations.** Board location strings are prose: `Zürich`, `CH-Zurich`,
 `Massachusetts - Boston`, `München; Köln`. An offline table turns those into
-city, ISO country and region at 94.4% coverage, so "jobs in Europe" is a filter
-rather than a wish. It returns 6,662, and narrowing that to intern level leaves
-173.
+city, ISO country and region at 92.6% coverage, so "jobs in Europe" is a filter
+rather than a wish. It returns 8,793, and narrowing that to intern level leaves
+231.
 
 **Searches.** Dense vectors for meaning, BM25 for the exact words, fused by
 reciprocal rank. A precomputed inverted index took a query from 26 seconds to
