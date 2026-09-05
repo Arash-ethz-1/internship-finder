@@ -12,8 +12,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..config import get_settings
+from ..db import now_iso
 from . import routes_chat, routes_inbox, routes_letters, routes_postings, routes_profile
 from .schemas import Health
+
+# When this process imported the app, so a stale server can be spotted
+# without guessing from how long a request took.
+STARTED_AT = now_iso()
 
 
 def create_app() -> FastAPI:
@@ -37,7 +42,17 @@ def create_app() -> FastAPI:
     @app.get("/api/health", tags=["meta"], response_model=Health)
     def health() -> Health:
         """Liveness probe. Confirms the app boots and settings resolve."""
-        return Health(status="ok", version=app.version)
+        settings = get_settings()
+        return Health(
+            status="ok",
+            version=app.version,
+            # Reported from the running process, not from the files on disk,
+            # which is the entire point: those two disagree exactly when
+            # something is wrong and nothing else says so.
+            screens_results=settings.screen_results and bool(settings.anthropic_api_key),
+            screen_model=settings.screen_model,
+            started_at=STARTED_AT,
+        )
 
     app.include_router(routes_postings.router)
     app.include_router(routes_letters.router)

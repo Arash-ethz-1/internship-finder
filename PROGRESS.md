@@ -130,6 +130,28 @@ Two follow-ups the author found by using it.
   `test_every_advertised_argument_is_one_the_function_takes` now walks every
   schema property against `inspect.signature`.
 
+### A stale dev server, and why it cost so long to see
+
+The screen was correct in every fresh process and did nothing in the running
+app, for an hour. Diagnosis in the end came from bypassing the browser --
+`curl` the running server, `curl` a second one started identically on 8001 --
+and the two disagreed on the same code: 30 rows and 0 screened at 450ms
+against 40 rows and 30 screened at 8s. That is not a code bug and no amount of
+reading the code would have found it.
+
+Two changes so it cannot cost that again:
+
+* `dev.py` passes `--reload-dir src`. Without it the reloader watches the
+  whole `backend/`, which includes `.venv`, on a OneDrive-synced path.
+* `/api/health` reports `screens_results`, `screen_model` and `started_at`
+  **from the running process**. Those disagree with the files on disk exactly
+  when something is wrong and nothing else says so, and that is the whole
+  point of reporting them.
+
+The general lesson is the same one the token-ceiling bug taught: this feature
+fails by doing nothing, and doing nothing is invisible. Every state where it
+is off now has to say so somewhere.
+
 ### Nothing the screen removes is gone
 
 The load-bearing property, and the author's explicit requirement.

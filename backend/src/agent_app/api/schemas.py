@@ -297,8 +297,21 @@ class ChatRequest(BaseModel):
 
 
 class Health(BaseModel):
+    """Liveness, plus the two things a stale server lies about silently.
+
+    A dev server that never reloaded answers every request normally and runs
+    whatever the code was when it started. That cost an afternoon of "the
+    screen is not filtering" while the screen was fine in every fresh process.
+    ``screens_results`` says whether *this process* can screen, and
+    ``started_at`` says how old its code is, so the question is one curl rather
+    than an inference from how long a search took.
+    """
+
     status: str
     version: str
+    screens_results: bool
+    screen_model: str
+    started_at: str
 
 
 class ProfileSummary(BaseModel):
