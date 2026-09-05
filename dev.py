@@ -32,7 +32,23 @@ FRONTEND = ROOT / "frontend"
 
 NPM = "npm.cmd" if os.name == "nt" else "npm"
 
-API_CMD = ["uv", "run", "uvicorn", "agent_app.api.main:app", "--reload", "--port", "8000"]
+# `--reload-dir src` is not a tidiness preference. Without it the reloader
+# watches the whole working directory, which here means `backend/.venv` --
+# tens of thousands of files, on a OneDrive-synced path. It then reloads late,
+# or not at all, and a stale server is invisible: the app answers normally and
+# quietly runs whatever the code was when you started it. That cost an
+# afternoon of "the screen is not running" when the screen was fine.
+API_CMD = [
+    "uv",
+    "run",
+    "uvicorn",
+    "agent_app.api.main:app",
+    "--reload",
+    "--reload-dir",
+    "src",
+    "--port",
+    "8000",
+]
 WEB_CMD = [NPM, "run", "dev"]
 
 
