@@ -1,20 +1,19 @@
 # Screener
 
-A private job search engine for internships. It pulls postings from public job
+A private job search agent. It pulls postings from public job
 board APIs onto your machine, indexes them for hybrid search, gives you an agent
-that can filter and triage them, drafts motivational letters grounded in your own
-project write-ups, and reads your inbox to suggest what happened to the
-applications you sent.
+that can filter and triage them, works out which of your own projects are worth
+putting in front of a given posting and helps you phrase them, and reads your
+inbox to suggest what happened to the applications you sent.
 
 Everything runs locally. One SQLite file, one numpy array, one inverted index.
 
-`4 boards` · `24,533 postings` · `582 companies` · `135,934 embedded chunks` ·
-`97.7% of locations resolved` · `~2s search`
+`4 boards` · `24,533 postings` · `579 companies` · `135,934 embedded chunks` ·
+`94.4% of locations resolved` · `~2s search`
 
 > **[ demo GIF goes here ]**
 > Record the walkthrough, save it as `docs/demo.gif`, and replace this block with
-> `![Screener](docs/demo.gif)`. The narration script is in
-> [`VIDEO-SCRIPT.md`](VIDEO-SCRIPT.md).
+> `![Screener](docs/demo.gif)`.
 
 This is a learning project. [`plan.md`](plan.md) is the spec and takes precedence
 over this file; [`PROGRESS.md`](PROGRESS.md) is the engineering log and
@@ -32,8 +31,9 @@ closed rather than deleted, because the letter you wrote still points at it.
 
 **Resolves locations.** Board location strings are prose: `Zürich`, `CH-Zurich`,
 `Massachusetts - Boston`, `München; Köln`. An offline table turns those into
-city, ISO country and region at 97.7% coverage, so "internships in Europe" is a
-filter rather than a wish. It returns 173.
+city, ISO country and region at 94.4% coverage, so "jobs in Europe" is a filter
+rather than a wish. It returns 6,662, and narrowing that to intern level leaves
+173.
 
 **Searches.** Dense vectors for meaning, BM25 for the exact words, fused by
 reciprocal rank. A precomputed inverted index took a query from 26 seconds to
@@ -45,11 +45,16 @@ means they passed on you. Conflating those is how a pipeline ends up reading as
 thirty rejections you never received. Untriaged is the absence of a row, not a
 status.
 
-**Drafts letters.** Grounded in your own write-ups, retrieved from the same
-index. Revision applies one instruction to an existing draft rather than rolling
-a new one, with the grounding extracts unchanged so an edit cannot invent a fact
-to fill the gap it opened. It refuses to draft when there is nothing to ground
-in, which is the point rather than a limitation.
+**Tells you what to mention.** For a given posting it retrieves the most
+relevant extracts from your own write-ups, from the same index as the postings,
+and works up phrasing you can take or leave. Everything it puts forward is
+grounded in something you actually wrote: where a detail is missing it leaves a
+`[TODO: ...]` marker rather than inventing one, and it refuses to run at all when
+there is nothing to ground in, which is the point rather than a limitation.
+Revision applies one instruction to what is already there rather than rolling a
+new one, with the grounding extracts unchanged, so an edit cannot invent a fact
+to fill the gap it opened. What comes out is a starting point you rewrite in your
+own words, not something to send as it stands.
 
 **Reads the replies.** Gmail, read only, matched to your applications and
 classified as rejection, interview, offer or other. Then it stops: every result
@@ -138,8 +143,8 @@ python dev.py lint     # ruff + ruff format --check + tsc + eslint
 Then open <http://localhost:5173>, using `localhost` rather than `127.0.0.1`;
 Vite binds to the first one, and checking the other looks like the server is
 down. Six surfaces: `/postings` (the screener), `/chat` (the agent),
-`/letters/:id`, `/inbox` (email suggestions), `/profile` (the write-ups letters
-are grounded in) and `/stats`.
+`/letters/:id`, `/inbox` (email suggestions), `/profile` (the write-ups it
+draws on) and `/stats`.
 
 `plan.md` asks for a Makefile or justfile; neither `make` nor `just` is installed
 on the development machine, so `dev.py` is the task runner. Python is already a
@@ -252,13 +257,14 @@ lunch. Re-chunking the whole corpus does not.
 
 ```bash
 uv run python -m agent_app.cli chat                  # the agent, in the terminal
-uv run python -m agent_app.cli draft-letter <id>     # a grounded letter
+uv run python -m agent_app.cli draft-letter <id>     # grounded phrasing for one posting
 uv run python -m agent_app.cli eval                  # retrieval numbers
 ```
 
 Two of those need content, not code. `draft-letter` refuses unless `profile/`
-holds real write-ups, because a letter with nothing to ground it in would be
-invented, so the refusal is the feature; see `profile/README.md` for the format.
+holds real write-ups, because anything it produced with nothing to ground it in
+would be invented, so the refusal is the feature; see `profile/README.md` for the
+format.
 And `eval` reads `data/eval/queries.jsonl`, one hand-labelled line per query:
 
 ```json

@@ -6,6 +6,11 @@
 # Runtime data: sqlite, vectors, embedding cache, drafted letters
 data/
 
+# The demo shot list. Personal filming notes and a staging recipe that involves
+# sending mail to yourself -- useful to the author, noise to anyone cloning
+# this. Kept on disk, not in the repo.
+VIDEO-SCRIPT.md
+
 # Personal project write-ups. The folder README and the example are committed
 # so a clone knows the expected format; nothing else in here ever is.
 profile/*
