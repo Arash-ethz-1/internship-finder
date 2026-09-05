@@ -11,9 +11,9 @@ Everything runs locally. One SQLite file, one numpy array, one inverted index.
 `4 boards` · `24,533 postings` · `579 companies` · `135,934 embedded chunks` ·
 `94.4% of locations resolved` · `~2s search`
 
-<video src="https://github.com/Arash-ethz-1/job-agent/releases/download/demo-assets/screener-demo.mp4" controls width="100%"></video>
+<video src="https://github.com/Arash-ethz-1/job-agent/raw/main/docs/demo.mp4" controls width="100%"></video>
 
-[**Watch the walkthrough**](https://github.com/Arash-ethz-1/job-agent/releases/download/demo-assets/screener-demo.mp4) — 4 minutes: the corpus and its filters, the agent picking its own filters and re-searching when the results are wrong, the screen removing quant trading roles from a machine learning search, grounded letter drafting, and the inbox suggesting what happened to an application without acting on it.
+[**Watch the walkthrough**](docs/demo.mp4) — 4 minutes: the corpus and its filters, the agent picking its own filters and re-searching when the results are wrong, the screen removing quant trading roles from a machine learning search, grounded letter drafting, and the inbox suggesting what happened to an application without acting on it.
 
 This is a learning project. [`plan.md`](plan.md) is the spec and takes precedence
 over this file; [`PROGRESS.md`](PROGRESS.md) is the engineering log and
