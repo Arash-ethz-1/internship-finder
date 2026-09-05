@@ -7,8 +7,11 @@
 # conda environment this expects and for the CPU-only variant.
 
 #SBATCH --mail-type=NONE
-#SBATCH --output=/itet-stor/abayat/net_scratch/internship-finder/jobs/%j.out
-#SBATCH --error=/itet-stor/abayat/net_scratch/internship-finder/jobs/%j.err
+# Relative to the directory sbatch was run from, so this file carries no
+# username. SLURM opens these before the script runs, so jobs/ has to exist
+# already -- the setup section of cluster/README.md creates it.
+#SBATCH --output=jobs/%j.out
+#SBATCH --error=jobs/%j.err
 #SBATCH --job-name=embed-chunks
 #SBATCH --mem=24G
 #SBATCH --nodes=1
@@ -21,7 +24,9 @@
 
 set -o errexit
 
-ETH_USERNAME=abayat
+# Your cluster login. On the cluster $USER is already it, so this normally
+# needs no editing; export ETH_USERNAME to override.
+ETH_USERNAME=${ETH_USERNAME:-$USER}
 PROJECT=internship-finder
 DIRECTORY=/itet-stor/${ETH_USERNAME}/net_scratch/${PROJECT}
 CONDA_ENVIRONMENT=embed

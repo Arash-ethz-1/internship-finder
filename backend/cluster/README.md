@@ -94,7 +94,7 @@ gzip -k ../data/pending.jsonl
 scp ../data/pending.jsonl.gz cluster/embed_chunks.py cluster/job.sh \
     ETH_USERNAME@tik42x.ethz.ch:/itet-stor/ETH_USERNAME/net_scratch/internship-finder/
 
-# 3. On tik42x. Edit job.sh first: TODO_USERNAME appears three times.
+# 3. On tik42x. job.sh needs no editing: it reads the username from $USER.
 cd /itet-stor/$USER/net_scratch/internship-finder
 gunzip pending.jsonl.gz
 chmod +x job.sh
