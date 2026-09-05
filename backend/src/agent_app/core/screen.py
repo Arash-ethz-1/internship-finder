@@ -111,7 +111,23 @@ MAX_CANDIDATES = 60
 # boilerplate. This is enough to tell a trading desk from a research group.
 EXCERPT_CHARS = 180
 
-MAX_TOKENS = 1000
+# The reply is one JSON row per *dropped* posting, so its length scales with
+# how much the screen throws away -- and the worst case, everything dropped, is
+# the case a fixed ceiling silently breaks. A flat 1000 was enough while
+# testing at `limit=10` and truncated at the default `limit=30`, where the pool
+# is 60: the answer came back cut mid-string, failed to parse, and the whole
+# screen fell back to the unscreened list. Nothing looked wrong from outside.
+#
+# 45 tokens a row covers a pretty-printed entry with an eight-word reason and
+# leaves room for the fences the model likes to add. Unused output tokens cost
+# nothing, so this is generous on purpose.
+TOKENS_PER_ROW = 45
+TOKENS_OVERHEAD = 300
+
+
+def token_budget(count: int) -> int:
+    """Enough output tokens for a verdict that drops every candidate."""
+    return TOKENS_PER_ROW * count + TOKENS_OVERHEAD
 
 
 @dataclass(frozen=True)
@@ -159,17 +175,26 @@ def build_prompt(request: str, candidates: list[dict[str, Any]], applied: str = 
     )
 
 
-def call_model(settings: Settings, prompt: str) -> str:
+def call_model(settings: Settings, prompt: str, count: int) -> str:
     """Ask the model to screen one list. The seam the tests replace."""
     from anthropic import Anthropic
 
     client = Anthropic(api_key=settings.require_anthropic_key())
     message = client.messages.create(
         model=settings.screen_model,
-        max_tokens=MAX_TOKENS,
+        max_tokens=token_budget(count),
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}],
     )
+    if message.stop_reason == "max_tokens":
+        # Worth its own line. Truncated JSON reaches `parse_response` as
+        # unparseable prose, which reports "the model did not answer in JSON"
+        # -- true, and completely the wrong thing to go and investigate.
+        log.warning(
+            "screen hit its %d token ceiling on %d candidates and was cut off",
+            token_budget(count),
+            count,
+        )
     return "".join(block.text for block in message.content if block.type == "text").strip()
 
 
@@ -197,7 +222,7 @@ def screen(request: str, candidates: list[dict[str, Any]], applied: str = "") ->
 
     trimmed = candidates[:MAX_CANDIDATES]
     try:
-        raw = call_model(settings, build_prompt(request, trimmed, applied))
+        raw = call_model(settings, build_prompt(request, trimmed, applied), len(trimmed))
     except Exception as exc:  # noqa: BLE001 - a failed screen must not fail the search
         log.warning("screening failed, showing the unscreened list: %s", exc)
         return NOT_RUN

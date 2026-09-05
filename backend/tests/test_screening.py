@@ -143,7 +143,7 @@ def test_screen_can_be_switched_off(monkeypatch: pytest.MonkeyPatch, with_key) -
     monkeypatch.setenv("SCREEN_RESULTS", "0")
     reset_settings()
 
-    def explode(settings, prompt):
+    def explode(settings, prompt, count):
         raise AssertionError("the screen must not call the model when it is off")
 
     monkeypatch.setattr(screen, "call_model", explode)
@@ -153,13 +153,26 @@ def test_screen_can_be_switched_off(monkeypatch: pytest.MonkeyPatch, with_key) -
 def test_screen_degrades_when_the_model_call_fails(
     monkeypatch: pytest.MonkeyPatch, with_key
 ) -> None:
-    def explode(settings, prompt):
+    def explode(settings, prompt, count):
         raise TimeoutError("the screening model timed out")
 
     monkeypatch.setattr(screen, "call_model", explode)
     # A search that returns a slightly noisy list is useful. A search that
     # raises because a secondary model was slow is not.
     assert not screen.screen("ml research", [{"company": "Acme", "title": "ML Intern"}]).ran
+
+
+def test_the_token_budget_grows_with_the_candidate_list() -> None:
+    # The reply is one row per *dropped* posting, so the worst case scales with
+    # the pool. A flat ceiling was enough at limit=10 and truncated at the
+    # default limit=30, where the pool is 60 -- the JSON came back cut in half,
+    # failed to parse, and the screen silently showed the unscreened list.
+    small = screen.token_budget(20)
+    default_pool = screen.token_budget(60)
+    assert default_pool > small
+    # Room for an eight-word reason on every single candidate, with the pool
+    # capped at MAX_CANDIDATES so this is the true worst case.
+    assert screen.token_budget(screen.MAX_CANDIDATES) >= 45 * screen.MAX_CANDIDATES
 
 
 def test_the_prompt_carries_titles_and_excerpts(with_key) -> None:
@@ -191,7 +204,7 @@ def test_a_screened_out_posting_leaves_the_result_list(
     monkeypatch.setattr(
         screen,
         "call_model",
-        lambda settings, prompt: '{"drop": [{"n": 2, "why": "quant trading, not ML"}]}',
+        lambda settings, prompt, count: '{"drop": [{"n": 2, "why": "quant trading, not ML"}]}',
     )
 
     out = tools.find_postings("machine learning research internship", limit=30)
@@ -216,7 +229,7 @@ def test_a_screened_out_posting_is_not_gone_forever(
     monkeypatch.setattr(
         screen,
         "call_model",
-        lambda settings, prompt: '{"drop": [{"n": 2, "why": "quant trading, not ML"}]}',
+        lambda settings, prompt, count: '{"drop": [{"n": 2, "why": "quant trading, not ML"}]}',
     )
 
     tools.find_postings("machine learning research internship", limit=30)
@@ -230,7 +243,7 @@ def test_a_screened_out_posting_is_not_gone_forever(
     # And the proof of that: with the screen quiet, the same posting is still
     # there to be found. (So is greenhouse:1, because `found` is not a
     # decision either -- walking past a result does not settle it.)
-    monkeypatch.setattr(screen, "call_model", lambda settings, prompt: '{"drop": []}')
+    monkeypatch.setattr(screen, "call_model", lambda settings, prompt, count: '{"drop": []}')
     again = [row["posting_id"] for row in tools.find_postings("quant research", limit=30)]
     assert "greenhouse:2" in again
 
@@ -245,7 +258,7 @@ def test_screened_out_rows_cannot_be_mistaken_for_results(
     monkeypatch.setattr(
         screen,
         "call_model",
-        lambda settings, prompt: '{"drop": [{"n": 2, "why": "quant trading, not ML"}]}',
+        lambda settings, prompt, count: '{"drop": [{"n": 2, "why": "quant trading, not ML"}]}',
     )
 
     dropped = [
@@ -270,7 +283,7 @@ def test_the_screen_sees_every_phrasing(
     monkeypatch.setattr(retrieval, "search", fake_search_over(conn))
     seen: list[str] = []
 
-    def capture(settings, prompt):
+    def capture(settings, prompt, count):
         seen.append(prompt)
         return '{"drop": []}'
 

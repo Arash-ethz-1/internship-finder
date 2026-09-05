@@ -87,6 +87,22 @@ Two prompt rules were measured, not guessed:
   measured worse -- 3/40 -> 5/40. It made the model argue with itself about
   Jump Trading and drop more of it.
 
+### The bug that made it look like it was not running
+
+Caught by the author within minutes of using it. `MAX_TOKENS` was a flat 1000,
+but the screen's reply is one JSON row per *dropped* posting, so its length
+scales with how much it throws away. That was fine at the `limit=10` used while
+building and truncated at the **default** `limit=30`, where the pool is 60: the
+answer came back cut mid-string, failed to parse, and the fail-safe path showed
+the unscreened list. From outside it looked exactly like the screen was
+switched off, and the log said "did not return JSON" -- true, and the wrong
+thing to investigate.
+
+`token_budget(count)` now scales the ceiling with the pool, and `call_model`
+logs `stop_reason == "max_tokens"` by name. The lesson is not about tokens: a
+component whose failure mode is *doing nothing quietly* needs its failures to
+be loud, because nobody can see an absence.
+
 ### Nothing the screen removes is gone
 
 The load-bearing property, and the author's explicit requirement.
